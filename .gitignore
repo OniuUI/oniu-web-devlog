@@ -1,0 +1,39 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node
+**/node_modules/
+**/.npm/
+**/.cache/
+
+# Builds
+oniu-web/dist/
+oniu-web/dist-ssr/
+
+# Runtime server data (do not commit)
+oniu-web/public/_data/**
+!oniu-web/public/_data/
+!oniu-web/public/_data/.htaccess
+
+oniu-web/public/_media_cache/**
+!oniu-web/public/_media_cache/
+!oniu-web/public/_media_cache/.htaccess
+
+oniu-web/public/uploads/**
+!oniu-web/public/uploads/
+!oniu-web/public/uploads/.htaccess
+
+

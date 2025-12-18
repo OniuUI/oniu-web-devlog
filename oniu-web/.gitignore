@@ -1,0 +1,39 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+.env
+.env.*
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Runtime server data (do not commit)
+public/_data/**
+!public/_data/
+!public/_data/.htaccess
+
+public/_media_cache/**
+!public/_media_cache/
+!public/_media_cache/.htaccess
+
+public/uploads/**
+!public/uploads/
+!public/uploads/.htaccess

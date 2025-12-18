@@ -1,0 +1,91 @@
+@import "tailwindcss";
+
+@keyframes oniu-hueroll {
+  0% {
+    filter: hue-rotate(0deg);
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    filter: hue-rotate(18deg);
+    transform: translate3d(0, -6px, 0);
+  }
+  100% {
+    filter: hue-rotate(0deg);
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+/* Optional: apply to decorative elements only */
+.oniu-animate-hue {
+  animation: oniu-hueroll 10s ease-in-out infinite;
+  will-change: filter, transform;
+}
+
+@keyframes oniu-mark-float {
+  0% { transform: translateY(0px); }
+  50% { transform: translateY(-2px); }
+  100% { transform: translateY(0px); }
+}
+
+@keyframes oniu-mark-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.oniu-mark {
+  animation: oniu-mark-float 3.6s ease-in-out infinite;
+}
+
+.oniu-mark::before {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  border-radius: 14px;
+  background: radial-gradient(circle at 30% 20%, rgba(165,180,252,.22), transparent 55%),
+              radial-gradient(circle at 70% 70%, rgba(16,185,129,.16), transparent 55%),
+              radial-gradient(circle at 70% 25%, rgba(14,165,233,.16), transparent 55%);
+  filter: blur(10px);
+  opacity: .9;
+}
+
+.oniu-mark-rotator {
+  animation: oniu-mark-spin 8s linear infinite;
+}
+
+@keyframes oniu-logo-hue {
+  0% { filter: hue-rotate(0deg) saturate(1.05); }
+  50% { filter: hue-rotate(24deg) saturate(1.2); }
+  100% { filter: hue-rotate(0deg) saturate(1.05); }
+}
+
+@keyframes oniu-logo-wink {
+  0%, 70%, 100% { transform: scaleY(1); }
+  76% { transform: scaleY(0.35); }
+  82% { transform: scaleY(1); }
+}
+
+.oniu-logo-hue {
+  animation: oniu-logo-hue 6.5s ease-in-out infinite;
+  will-change: filter;
+}
+
+.oniu-logo-wink {
+  transform-origin: 50% 50%;
+  transform-box: fill-box;
+  animation: oniu-logo-wink 4.2s cubic-bezier(.2,.8,.2,1) infinite;
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oniu-animate-hue {
+    animation: none;
+  }
+  .oniu-mark,
+  .oniu-mark-rotator {
+    animation: none;
+  }
+  .oniu-logo-hue,
+  .oniu-logo-wink {
+    animation: none;
+  }
+}

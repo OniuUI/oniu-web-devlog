@@ -1,0 +1,7 @@
+Options -Indexes
+
+# Prevent executing scripts from uploads
+RemoveHandler .php .phtml .phar .cgi .pl .asp .aspx .jsp
+RemoveType .php .phtml .phar .cgi .pl .asp .aspx .jsp
+
+

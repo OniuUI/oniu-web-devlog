@@ -1,0 +1,7 @@
+RewriteEngine On
+RewriteBase /cdn/
+
+RewriteRule ^img$ img.php [L]
+RewriteRule ^video$ video.php [L]
+
+

@@ -1,0 +1,13 @@
+{
+  "publications": [
+    {
+      "id": "welcome",
+      "title": "Welcome",
+      "date": "2025-12-16",
+      "body": "This is the new ONIU site. Posts published here show up on the homepage.\n\n(You can replace this post from /admin.)",
+      "media": []
+    }
+  ]
+}
+
+
