@@ -51,12 +51,14 @@ function get_disk_usage(): array {
   $total = 0;
   $free = 0;
   
-  if ($dataDir !== false) {
-    $total = disk_total_space($dataDir);
-    $free = disk_free_space($dataDir);
+  if ($dataDir !== false && function_exists('disk_total_space') && function_exists('disk_free_space')) {
+    $total = @disk_total_space($dataDir);
+    $free = @disk_free_space($dataDir);
+    if ($total === false) $total = 0;
+    if ($free === false) $free = 0;
   }
   
-  $used = $total - $free;
+  $used = $total > 0 ? ($total - $free) : 0;
   
   $dataSize = 0;
   if ($dataDir !== false && is_dir($dataDir)) {
@@ -120,8 +122,10 @@ function get_system_info(): array {
   ];
   
   if (function_exists('sys_getloadavg')) {
-    $load = sys_getloadavg();
-    $info['load_average'] = $load;
+    $load = @sys_getloadavg();
+    if ($load !== false) {
+      $info['load_average'] = $load;
+    }
   }
   
   return $info;
@@ -163,17 +167,19 @@ function get_error_logs(int $limit = 100): array {
 
 function get_network_info(): array {
   $info = [
-    'hostname' => gethostname(),
+    'hostname' => function_exists('gethostname') ? @gethostname() : 'Unknown',
     'server_addr' => $_SERVER['SERVER_ADDR'] ?? 'Unknown',
     'remote_addr' => $_SERVER['REMOTE_ADDR'] ?? 'Unknown',
   ];
   
   if (function_exists('getrusage')) {
-    $usage = getrusage();
-    $info['network_stats'] = [
-      'involuntary_context_switches' => $usage['ru_nivcsw'] ?? 0,
-      'voluntary_context_switches' => $usage['ru_nvcsw'] ?? 0,
-    ];
+    $usage = @getrusage();
+    if ($usage !== false && is_array($usage)) {
+      $info['network_stats'] = [
+        'involuntary_context_switches' => $usage['ru_nivcsw'] ?? 0,
+        'voluntary_context_switches' => $usage['ru_nvcsw'] ?? 0,
+      ];
+    }
   }
   
   return $info;
