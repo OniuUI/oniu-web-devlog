@@ -384,7 +384,7 @@ if ($method === 'POST') {
         $mod['deleted_ids'][$id] = $now;
         save_moderation($room, $mod);
       }
-      respond(200, ['ok' => true, 'kept' => $res['kept'], 'removed' => count($res['removed'])]);
+      respond(200, ['ok' => true, 'kept' => $res['kept'], 'removed' => count($res['removed']), 'mod' => mod_payload($mod)]);
     }
 
     if (!is_admin()) respond(403, ['error' => 'admin_required']);
@@ -399,7 +399,7 @@ if ($method === 'POST') {
       $seconds = max(0, min(3600, $seconds));
       $mod['paused_until'] = $seconds > 0 ? ($now + $seconds * 1000) : 0;
       save_moderation($room, $mod);
-      respond(200, ['ok' => true, 'mod' => $mod]);
+      respond(200, ['ok' => true, 'mod' => mod_payload($mod)]);
     }
     if ($action === 'list_state') {
       $pres = load_presence($room);
@@ -428,15 +428,19 @@ if ($method === 'POST') {
       if ($ip === '') respond(400, ['error' => 'missing_ip']);
       $mod['banned'][$ip] = true;
       unset($mod['muted'][$ip]);
+      $res = rewrite_chat_collect($file, function($m) use ($ip) { return ($m['ip'] ?? '') !== $ip; });
+      foreach ($res['removed'] as $rid) {
+        if (is_string($rid) && $rid !== '') $mod['deleted_ids'][$rid] = $now;
+      }
       save_moderation($room, $mod);
-      respond(200, ['ok' => true, 'mod' => $mod]);
+      respond(200, ['ok' => true, 'mod' => mod_payload($mod), 'kept' => $res['kept'], 'removed' => count($res['removed'])]);
     }
     if ($action === 'unban') {
       $ip = isset($body['ip']) && is_string($body['ip']) ? trim($body['ip']) : '';
       if ($ip === '') respond(400, ['error' => 'missing_ip']);
       unset($mod['banned'][$ip]);
       save_moderation($room, $mod);
-      respond(200, ['ok' => true, 'mod' => $mod]);
+      respond(200, ['ok' => true, 'mod' => mod_payload($mod)]);
     }
     if ($action === 'mute') {
       $ip = isset($body['ip']) && is_string($body['ip']) ? trim($body['ip']) : '';
@@ -445,14 +449,14 @@ if ($method === 'POST') {
       if ($ip === '') respond(400, ['error' => 'missing_ip']);
       $mod['muted'][$ip] = $now + $minutes * 60 * 1000;
       save_moderation($room, $mod);
-      respond(200, ['ok' => true, 'mod' => $mod]);
+      respond(200, ['ok' => true, 'mod' => mod_payload($mod)]);
     }
     if ($action === 'unmute') {
       $ip = isset($body['ip']) && is_string($body['ip']) ? trim($body['ip']) : '';
       if ($ip === '') respond(400, ['error' => 'missing_ip']);
       unset($mod['muted'][$ip]);
       save_moderation($room, $mod);
-      respond(200, ['ok' => true, 'mod' => $mod]);
+      respond(200, ['ok' => true, 'mod' => mod_payload($mod)]);
     }
     if ($action === 'delete_message') {
       $id = safe_id($body['id'] ?? null);
@@ -460,7 +464,7 @@ if ($method === 'POST') {
       $mod['deleted_ids'][$id] = $now;
       save_moderation($room, $mod);
       $kept = rewrite_chat($file, function($m) use ($id) { return ($m['id'] ?? '') !== $id; });
-      respond(200, ['ok' => true, 'kept' => $kept]);
+      respond(200, ['ok' => true, 'kept' => $kept, 'mod' => mod_payload($mod)]);
     }
     if ($action === 'clear_history') {
       // Archive current file then start fresh.
@@ -469,9 +473,9 @@ if ($method === 'POST') {
         @rename($file, $arch);
       }
       $mod['cleared_before_ts'] = $now;
-      $mod['deleted_ids'] = []; // reset tombstones on full clear
+      $mod['deleted_ids'] = [];
       save_moderation($room, $mod);
-      respond(200, ['ok' => true]);
+      respond(200, ['ok' => true, 'mod' => mod_payload($mod)]);
     }
     if ($action === 'clear_by_ip') {
       $ip = isset($body['ip']) && is_string($body['ip']) ? trim($body['ip']) : '';
@@ -481,7 +485,7 @@ if ($method === 'POST') {
         if (is_string($rid) && $rid !== '') $mod['deleted_ids'][$rid] = $now;
       }
       save_moderation($room, $mod);
-      respond(200, ['ok' => true, 'kept' => $res['kept'], 'removed' => count($res['removed'])]);
+      respond(200, ['ok' => true, 'kept' => $res['kept'], 'removed' => count($res['removed']), 'mod' => mod_payload($mod)]);
     }
     if ($action === 'notice') {
       $text = safe_text((string)($body['text'] ?? ''));

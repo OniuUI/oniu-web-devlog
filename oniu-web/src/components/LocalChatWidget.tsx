@@ -72,6 +72,7 @@ export default function LocalChatWidget({ room = 'oniu' }: { room?: string }) {
   const [lastReadTs, setLastReadTs] = useState(() => lastTimestamp(loadChatCache(storageKey)))
   const [soundReady, setSoundReady] = useState(false)
   const lastNotifiedIdRef = useRef<string>('')
+  const lastModRef = useRef<string>('')
 
   const listRef = useRef<HTMLDivElement | null>(null)
 
@@ -125,6 +126,25 @@ export default function LocalChatWidget({ room = 'oniu' }: { room?: string }) {
     let inFlight: AbortController | null = null
 
     const applyServer = (incoming: ChatMessage[], mod: ChatMod | undefined, serverNow: number | undefined) => {
+      const modKey = mod ? JSON.stringify(mod) : ''
+      const modChanged = modKey !== lastModRef.current
+      lastModRef.current = modKey
+
+      if (modChanged && mod) {
+        const deletedIds = Array.isArray(mod.deleted_ids) ? mod.deleted_ids : []
+        const clearedBefore = typeof mod.cleared_before_ts === 'number' ? mod.cleared_before_ts : 0
+        if (deletedIds.length > 0 || clearedBefore > 0) {
+          const local = loadChatCache(storageKey)
+          const filtered = applyMod(local, mod)
+          saveChatCache(storageKey, filtered)
+          setMessages(filtered)
+          const ts = lastTimestamp(filtered)
+          if (ts) setLastSeen(ts)
+          else if (typeof serverNow === 'number' && serverNow > 0) setLastSeen(serverNow)
+          return
+        }
+      }
+
       const local = loadChatCache(storageKey)
       const merged = mergeMessages(local, incoming)
       const afterMod = applyMod(merged, mod)
@@ -264,6 +284,14 @@ export default function LocalChatWidget({ room = 'oniu' }: { room?: string }) {
         setAdminError(`Admin action failed (${res.status})`)
         return
       }
+      const data = (await res.json()) as { mod?: ChatMod }
+      if (data.mod) {
+        const local = loadChatCache(storageKey)
+        const filtered = applyMod(local, data.mod)
+        saveChatCache(storageKey, filtered)
+        setMessages(filtered)
+        lastModRef.current = JSON.stringify(data.mod)
+      }
     } catch {
       setAdminError('Admin action failed (network)')
       return
@@ -324,6 +352,13 @@ export default function LocalChatWidget({ room = 'oniu' }: { room?: string }) {
         setMessages(local)
         saveChatCache(storageKey, local)
       } else {
+        const data = (await res.json()) as { mod?: ChatMod }
+        if (data.mod) {
+          const filtered = applyMod(next, data.mod)
+          saveChatCache(storageKey, filtered)
+          setMessages(filtered)
+          lastModRef.current = JSON.stringify(data.mod)
+        }
         kickPoll()
       }
     } catch {
@@ -432,7 +467,15 @@ export default function LocalChatWidget({ room = 'oniu' }: { room?: string }) {
         <div className="flex h-[min(78svh,640px)] w-[min(94vw,360px)] flex-col overflow-hidden rounded-2xl bg-neutral-950/70 ring-1 ring-white/10 backdrop-blur">
           <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
             <div className="min-w-0">
-              <div className="truncate text-sm font-semibold">Chat</div>
+              <div className="flex items-center gap-2">
+                <div className="truncate text-sm font-semibold">Chat</div>
+                {presencePublic.length > 0 ? (
+                  <div className="flex items-center gap-1.5">
+                    <div className="h-2 w-2 rounded-full bg-green-500"></div>
+                    <span className="text-xs font-semibold text-green-400">{presencePublic.length}</span>
+                  </div>
+                ) : null}
+              </div>
               <div className="text-xs text-neutral-400">
                 {mode === 'global' ? 'Global chat' : 'Local fallback'} •{' '}
                 <span className={net === 'online' ? 'text-emerald-300' : net === 'offline' ? 'text-rose-300' : ''}>
@@ -524,20 +567,40 @@ export default function LocalChatWidget({ room = 'oniu' }: { room?: string }) {
                             <div className="truncate text-neutral-500">{u.ip}</div>
                           </div>
                           <div className="flex gap-1">
-                            <button
-                              onClick={() => void adminAction({ action: 'unmute', ip: u.ip })}
-                              className="rounded-md px-2 py-0.5 text-[10px] text-neutral-200 ring-1 ring-white/10 hover:bg-white/5"
-                              disabled={!csrf || adminBusy}
-                            >
-                              Unmute
-                            </button>
-                            <button
-                              onClick={() => void adminAction({ action: 'unban', ip: u.ip })}
-                              className="rounded-md px-2 py-0.5 text-[10px] text-neutral-200 ring-1 ring-white/10 hover:bg-white/5"
-                              disabled={!csrf || adminBusy}
-                            >
-                              Unban
-                            </button>
+                            {muted[u.ip] && muted[u.ip] > Date.now() ? (
+                              <button
+                                onClick={() => void adminAction({ action: 'unmute', ip: u.ip })}
+                                className="rounded-md px-2 py-0.5 text-[10px] text-neutral-200 ring-1 ring-white/10 hover:bg-white/5"
+                                disabled={!csrf || adminBusy}
+                              >
+                                Unmute
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => void adminAction({ action: 'mute', ip: u.ip, minutes: 10 })}
+                                className="rounded-md px-2 py-0.5 text-[10px] text-neutral-200 ring-1 ring-white/10 hover:bg-white/5"
+                                disabled={!csrf || adminBusy}
+                              >
+                                Mute
+                              </button>
+                            )}
+                            {banned.includes(u.ip) ? (
+                              <button
+                                onClick={() => void adminAction({ action: 'unban', ip: u.ip })}
+                                className="rounded-md px-2 py-0.5 text-[10px] text-neutral-200 ring-1 ring-white/10 hover:bg-white/5"
+                                disabled={!csrf || adminBusy}
+                              >
+                                Unban
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => void adminAction({ action: 'ban', ip: u.ip })}
+                                className="rounded-md px-2 py-0.5 text-[10px] text-rose-200 ring-1 ring-rose-500/30 hover:bg-rose-500/10"
+                                disabled={!csrf || adminBusy}
+                              >
+                                Ban
+                              </button>
+                            )}
                             <button
                               onClick={() => void adminAction({ action: 'clear_by_ip', ip: u.ip })}
                               className="rounded-md px-2 py-0.5 text-[10px] text-rose-200 ring-1 ring-rose-500/30 hover:bg-rose-500/10"

@@ -18,6 +18,20 @@ type PeerState = {
   stream: MediaStream | null
   pendingIce: RTCIceCandidateInit[]
   hasLocalTracks: boolean
+  status: 'connecting' | 'connected' | 'buffering'
+}
+
+type RoomInfo = {
+  room: string
+  acceptedAt: number
+  lastJoined?: number
+}
+
+type CallDecision = {
+  room: string
+  from: string
+  decision: 'accepted' | 'declined'
+  timestamp: number
 }
 
 function uniquePeers(selfCid: string, peers: PresenceUser[]): PresenceUser[] {
@@ -32,10 +46,62 @@ function uniquePeers(selfCid: string, peers: PresenceUser[]): PresenceUser[] {
   return out
 }
 
+function loadCallDecisions(): CallDecision[] {
+  try {
+    const stored = localStorage.getItem('oniu.call.decisions')
+    if (!stored) return []
+    const parsed = JSON.parse(stored)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+function saveCallDecision(decision: CallDecision) {
+  try {
+    const decisions = loadCallDecisions()
+    const filtered = decisions.filter((d) => !(d.room === decision.room && d.from === decision.from))
+    filtered.push(decision)
+    const recent = filtered.filter((d) => Date.now() - d.timestamp < 7 * 24 * 60 * 60 * 1000)
+    localStorage.setItem('oniu.call.decisions', JSON.stringify(recent))
+  } catch {}
+}
+
+function hasDeclinedCall(room: string, from: string): boolean {
+  const decisions = loadCallDecisions()
+  return decisions.some((d) => d.room === room && d.from === from && d.decision === 'declined')
+}
+
+function loadAcceptedRooms(): RoomInfo[] {
+  try {
+    const stored = localStorage.getItem('oniu.rooms.accepted')
+    if (!stored) return []
+    const parsed = JSON.parse(stored)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+function saveAcceptedRoom(room: string) {
+  try {
+    const rooms = loadAcceptedRooms()
+    const existing = rooms.find((r) => r.room === room)
+    if (existing) {
+      existing.lastJoined = Date.now()
+    } else {
+      rooms.push({ room, acceptedAt: Date.now(), lastJoined: Date.now() })
+    }
+    const recent = rooms.filter((r) => Date.now() - r.acceptedAt < 30 * 24 * 60 * 60 * 1000)
+    localStorage.setItem('oniu.rooms.accepted', JSON.stringify(recent))
+  } catch {}
+}
+
 export default function VideoChatPanel({ room, selfCid, selfName, peers, onClose }: Props) {
   const signalingRoom = 'rtc'
   const [activeRoom, setActiveRoom] = useState(room)
   const [joined, setJoined] = useState(false)
+  const [joining, setJoining] = useState(false)
   const [callTarget, setCallTarget] = useState<string>('')
   const [error, setError] = useState<string | null>(null)
   const [localStream, setLocalStream] = useState<MediaStream | null>(null)
@@ -43,6 +109,9 @@ export default function VideoChatPanel({ room, selfCid, selfName, peers, onClose
   const [incoming, setIncoming] = useState<{ from: string; room: string; sdp: string } | null>(null)
   const [outgoing, setOutgoing] = useState<{ to: string; room: string } | null>(null)
   const [shareOn, setShareOn] = useState(false)
+  const [roomParticipants, setRoomParticipants] = useState<PresenceUser[]>([])
+  const [acceptedRooms, setAcceptedRooms] = useState<RoomInfo[]>(loadAcceptedRooms())
+  const [showRoomList, setShowRoomList] = useState(false)
   const ringerRef = useRef<{ stop: () => void } | null>(null)
   const peerRef = useRef<Map<string, PeerState>>(new Map())
   const sinceRef = useRef(0)
@@ -103,13 +172,23 @@ export default function VideoChatPanel({ room, selfCid, selfName, peers, onClose
     const ac = new AbortController()
     try {
       const rows = await rtcPresence({ channel, client: selfCid, signal: ac.signal })
-      const targets = rows.filter((p) => p.cid && p.cid !== selfCid && p.lastSeen > Date.now() - 45000).slice(0, 12)
+      const active = rows.filter((p) => p.cid && p.lastSeen > Date.now() - 45000)
+      setRoomParticipants(active)
+      const targets = active.filter((p) => p.cid !== selfCid).slice(0, 12)
       for (const p of targets) {
         const iAmInitiator = selfCid.localeCompare(p.cid) < 0
         await connectTo(p.cid, !iAmInitiator)
       }
     } catch {}
   }
+
+  useEffect(() => {
+    if (!joined) return
+    const interval = setInterval(() => {
+      void syncRoomParticipants(activeRoom)
+    }, 2000)
+    return () => clearInterval(interval)
+  }, [joined, activeRoom, selfCid])
 
   useEffect(() => {
     return () => {
@@ -144,12 +223,22 @@ export default function VideoChatPanel({ room, selfCid, selfName, peers, onClose
     })
 
     pc.ontrack = (ev) => {
+      const st = peerRef.current.get(peerCid)
+      if (st) st.status = 'connected'
       setRemote((prev) => {
         const existingStream = prev[peerCid]
         const next = existingStream ? new MediaStream(existingStream.getTracks()) : new MediaStream()
         if (ev.track) next.addTrack(ev.track)
         return { ...prev, [peerCid]: next }
       })
+    }
+
+    pc.onconnectionstatechange = () => {
+      const st = peerRef.current.get(peerCid)
+      if (!st) return
+      if (st.pc.connectionState === 'connected' || st.pc.connectionState === 'connecting') {
+        st.status = st.pc.connectionState === 'connected' ? 'connected' : 'connecting'
+      }
     }
 
     pc.onicecandidate = (ev) => {
@@ -164,7 +253,12 @@ export default function VideoChatPanel({ room, selfCid, selfName, peers, onClose
       }).catch(() => {})
     }
 
-    peerRef.current.set(peerCid, { cid: peerCid, pc, stream: null, pendingIce: [], hasLocalTracks: false })
+    peerRef.current.set(peerCid, { cid: peerCid, pc, stream: null, pendingIce: [], hasLocalTracks: false, status: 'buffering' })
+    setRemote((prev) => {
+      if (prev[peerCid]) return prev
+      const emptyStream = new MediaStream()
+      return { ...prev, [peerCid]: emptyStream }
+    })
     return pc
   }
 
@@ -231,10 +325,24 @@ export default function VideoChatPanel({ room, selfCid, selfName, peers, onClose
 
   async function joinGlobal() {
     setError(null)
+    setJoining(true)
     await resetSession(room)
     setJoined(true)
     await rtcSend({ room: signalingRoom, channel: room, from: selfCid, to: '', type: 'join', payload: { name: selfName } })
     await syncRoomParticipants(room)
+    setJoining(false)
+  }
+
+  async function joinRoom(targetRoom: string) {
+    setError(null)
+    setJoining(true)
+    await resetSession(targetRoom)
+    setJoined(true)
+    await rtcSend({ room: signalingRoom, channel: targetRoom, from: selfCid, to: '', type: 'join', payload: { name: selfName } })
+    await syncRoomParticipants(targetRoom)
+    saveAcceptedRoom(targetRoom)
+    setAcceptedRooms(loadAcceptedRooms())
+    setJoining(false)
   }
 
   async function startDirectCall(target: string) {
@@ -256,6 +364,7 @@ export default function VideoChatPanel({ room, selfCid, selfName, peers, onClose
     const channel = typeof m.channel === 'string' && m.channel ? m.channel : m.room
     if (channel !== activeRoom) {
       if (m.type === 'offer') {
+        if (hasDeclinedCall(channel, m.from)) return
         const sdp = typeof m.payload === 'string' ? m.payload : ''
         if (sdp) {
           setIncoming({ from: m.from, room: channel, sdp })
@@ -269,6 +378,10 @@ export default function VideoChatPanel({ room, selfCid, selfName, peers, onClose
 
     if (m.type === 'join') {
       if (!joined) return
+      const st = peerRef.current.get(peerCid)
+      if (!st) {
+        createPeerConnection(peerCid)
+      }
       const iAmInitiator = selfCid.localeCompare(peerCid) < 0
       void connectTo(peerCid, !iAmInitiator).catch(() => {})
       return
@@ -337,6 +450,8 @@ export default function VideoChatPanel({ room, selfCid, selfName, peers, onClose
     const from = incoming.from
     const nextRoom = incoming.room
     const sdp = incoming.sdp
+    setJoining(true)
+    saveCallDecision({ room: nextRoom, from, decision: 'accepted', timestamp: Date.now() })
     if (nextRoom !== activeRoom) {
       await resetSession(nextRoom)
       setJoined(true)
@@ -357,13 +472,17 @@ export default function VideoChatPanel({ room, selfCid, selfName, peers, onClose
     const answer = await pc.createAnswer()
     await pc.setLocalDescription(answer)
     await rtcSend({ room: signalingRoom, channel: nextRoom, from: selfCid, to: from, type: 'answer', payload: answer.sdp ?? '' })
+    saveAcceptedRoom(nextRoom)
+    setAcceptedRooms(loadAcceptedRooms())
     setIncoming(null)
+    setJoining(false)
   }
 
   async function declineIncoming() {
     if (!incoming) return
     const from = incoming.from
     const nextRoom = incoming.room
+    saveCallDecision({ room: nextRoom, from, decision: 'declined', timestamp: Date.now() })
     setIncoming(null)
     try {
       await rtcSend({ room: signalingRoom, channel: nextRoom, from: selfCid, to: from, type: 'leave', payload: '' })
@@ -465,13 +584,28 @@ export default function VideoChatPanel({ room, selfCid, selfName, peers, onClose
     setIncoming(null)
   }
 
-  const remoteStreams = Object.entries(remote)
+  const activeParticipants = roomParticipants.filter((p) => p.cid !== selfCid && p.lastSeen > Date.now() - 45000)
+  const participantCount = activeParticipants.length + (joined ? 1 : 0)
+  const allPeerCids = new Set([...Object.keys(remote), ...Array.from(peerRef.current.keys())])
 
   return (
     <div ref={wrapRef} className="mt-3 rounded-2xl bg-neutral-950/30 p-4 ring-1 ring-white/10">
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
-          <div className="truncate text-sm font-semibold text-neutral-100">Video</div>
+          <div className="flex items-center gap-2">
+            <div className="truncate text-sm font-semibold text-neutral-100">Video</div>
+            {joined && participantCount > 0 ? (
+              <div className="flex items-center gap-1.5">
+                <div className="h-2 w-2 rounded-full bg-green-500"></div>
+                <span className="text-xs font-semibold text-green-400">{participantCount}</span>
+              </div>
+            ) : null}
+            {joining ? (
+              <span className="text-xs text-neutral-400">Joining...</span>
+            ) : joined ? (
+              <span className="text-xs text-green-400">Connected</span>
+            ) : null}
+          </div>
           <div className="truncate text-[11px] text-neutral-400">{activeRoom}</div>
         </div>
         <div className="flex items-center gap-2">
@@ -539,6 +673,14 @@ export default function VideoChatPanel({ room, selfCid, selfName, peers, onClose
             type="button"
           >
             New room
+          </button>
+
+          <button
+            onClick={() => setShowRoomList(!showRoomList)}
+            className="rounded-xl px-3 py-1.5 text-xs text-neutral-200 ring-1 ring-white/10 hover:bg-white/5"
+            type="button"
+          >
+            Rooms
           </button>
 
           <div className="flex items-center gap-2">
@@ -614,6 +756,27 @@ export default function VideoChatPanel({ room, selfCid, selfName, peers, onClose
 
         {error ? <div className="text-[11px] text-rose-300">{error}</div> : null}
 
+        {showRoomList && acceptedRooms.length > 0 ? (
+          <div className="rounded-2xl bg-neutral-950/40 p-3 ring-1 ring-white/10">
+            <div className="text-[11px] font-semibold text-neutral-200 mb-2">Accepted Rooms</div>
+            <div className="space-y-1 max-h-40 overflow-auto">
+              {acceptedRooms.map((r) => (
+                <button
+                  key={r.room}
+                  onClick={() => void joinRoom(r.room)}
+                  className="w-full text-left px-2 py-1.5 rounded-lg text-[11px] text-neutral-200 hover:bg-white/5 flex items-center justify-between"
+                  type="button"
+                >
+                  <span className="truncate">{r.room}</span>
+                  <span className="text-[10px] text-neutral-500 ml-2">
+                    {new Date(r.lastJoined || r.acceptedAt).toLocaleDateString()}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
         <div className="rounded-2xl bg-neutral-950/40 p-3 ring-1 ring-white/10">
           <div className="text-[11px] font-semibold text-neutral-200">Users</div>
           <div className="mt-2 max-h-40 overflow-auto rounded-xl ring-1 ring-white/10">
@@ -652,31 +815,56 @@ export default function VideoChatPanel({ room, selfCid, selfName, peers, onClose
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2">
-          <VideoTile label="You" muted stream={localStream} />
-          {remoteStreams.map(([peerCid, stream]) => (
-            <VideoTile key={peerCid} label={peerCid} stream={stream} />
-          ))}
+          <VideoTile label="You" muted stream={localStream} status={joined ? 'connected' : undefined} />
+          {Array.from(allPeerCids).map((peerCid) => {
+            const stream = remote[peerCid] || null
+            const st = peerRef.current.get(peerCid)
+            const status = st?.status || (stream ? 'connected' : 'buffering')
+            return <VideoTile key={peerCid} label={peerCid} stream={stream} status={status} />
+          })}
         </div>
       </div>
     </div>
   )
 }
 
-function VideoTile({ label, stream, muted }: { label: string; stream: MediaStream | null; muted?: boolean }) {
+function VideoTile({ label, stream, muted, status }: { label: string; stream: MediaStream | null; muted?: boolean; status?: 'connecting' | 'connected' | 'buffering' }) {
   const ref = useRef<HTMLVideoElement | null>(null)
+  const hasTracks = stream && stream.getTracks().length > 0
 
   useEffect(() => {
     if (!ref.current) return
-    if (!stream) return
+    if (!stream || !hasTracks) {
+      ref.current.srcObject = null
+      return
+    }
     ref.current.srcObject = stream
     void ref.current.play().catch(() => {})
-  }, [stream])
+  }, [stream, hasTracks])
+
+  const statusText = status === 'buffering' || (!hasTracks && status !== 'connected') ? 'Buffering...' : status === 'connecting' ? 'Connecting...' : null
+  const showBuffering = (!hasTracks && status !== 'connected') || status === 'buffering'
 
   return (
     <div className="overflow-hidden rounded-2xl bg-neutral-950/50 ring-1 ring-white/10">
-      <div className="px-3 py-2 text-xs font-semibold text-neutral-200">{label}</div>
-      <div className="aspect-video bg-black">
+      <div className="px-3 py-2 text-xs font-semibold text-neutral-200 flex items-center justify-between">
+        <span>{label}</span>
+        {statusText ? (
+          <span className="text-[10px] text-neutral-400">{statusText}</span>
+        ) : status === 'connected' && hasTracks ? (
+          <div className="h-1.5 w-1.5 rounded-full bg-green-500"></div>
+        ) : null}
+      </div>
+      <div className="aspect-video bg-black relative">
         <video ref={ref} muted={muted} playsInline autoPlay className="h-full w-full object-cover" />
+        {showBuffering ? (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="flex flex-col items-center gap-2">
+              <div className="h-8 w-8 border-2 border-neutral-600 border-t-neutral-300 rounded-full animate-spin"></div>
+              <div className="text-xs text-neutral-400">Waiting for stream...</div>
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   )
