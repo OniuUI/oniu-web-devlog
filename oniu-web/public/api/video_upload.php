@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/../_lib/error_log.php';
+
 ignore_user_abort(true);
 @set_time_limit(0);
 

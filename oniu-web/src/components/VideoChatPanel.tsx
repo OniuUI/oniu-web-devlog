@@ -18,13 +18,6 @@ type RoomInfo = {
   lastJoined?: number
 }
 
-type CallDecision = {
-  room: string
-  from: string
-  decision: 'accepted' | 'declined'
-  timestamp: number
-}
-
 type UserVideoState = {
   cid: string
   chunks: VideoChunk[]

@@ -7,8 +7,24 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/../_lib/error_log.php';
+
 ignore_user_abort(true);
 @set_time_limit(0);
+
+set_error_handler(function($severity, $message, $file, $line) {
+  if (error_reporting() & $severity && ($severity & (E_ERROR | E_PARSE | E_CORE_ERROR | E_COMPILE_ERROR | E_RECOVERABLE_ERROR))) {
+    app_log_error("PHP Error [$severity] in $file:$line - $message");
+  }
+  return false;
+});
+
+register_shutdown_function(function() {
+  $error = error_get_last();
+  if ($error && ($error['type'] & (E_ERROR | E_PARSE | E_CORE_ERROR | E_COMPILE_ERROR))) {
+    app_log_error("Fatal error in {$error['file']}:{$error['line']} - {$error['message']}");
+  }
+});
 
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');

@@ -392,6 +392,88 @@ if (count($trafficUsers) > 400) $trafficUsers = array_slice($trafficUsers, 0, 40
         </details>
 
         <details style="margin-top:14px">
+          <summary>Monitoring</summary>
+          <div class="muted" style="margin:10px 0">Server performance, resource usage, and diagnostics.</div>
+          <div id="monitor-data" style="margin:10px 0">
+            <div class="muted">Loading...</div>
+          </div>
+          <script>
+            (function() {
+              const el = document.getElementById('monitor-data');
+              function load() {
+                fetch('/admin/monitor.php', { cache: 'no-store' })
+                  .then(r => r.json())
+                  .then(data => {
+                    if (!data.ok) {
+                      el.innerHTML = '<div class="err">Failed to load monitoring data</div>';
+                      return;
+                    }
+                    const m = data.memory || {};
+                    const d = data.disk || {};
+                    const s = data.system || {};
+                    const n = data.network || {};
+                    const f = data.files || {};
+                    const errs = Array.isArray(data.errors) ? data.errors : [];
+                    
+                    let html = '<div style="display:grid;grid-template-columns:1fr;gap:10px;margin:10px 0">';
+                    
+                    const memPercent = m.percent || 0;
+                    const memColor = memPercent > 90 ? 'rgba(244,63,94,.8)' : memPercent > 70 ? 'rgba(251,191,36,.8)' : 'rgba(16,185,129,.8)';
+                    html += '<div class="item"><div><strong>Memory</strong><div class="muted">Used: ' + (m.used_formatted || 'N/A') + ' / ' + (m.limit_formatted || 'N/A') + ' (' + memPercent + '%)</div>';
+                    html += '<div style="width:100%;height:6px;background:rgba(255,255,255,.1);border-radius:3px;margin:6px 0;overflow:hidden"><div style="width:' + memPercent + '%;height:100%;background:' + memColor + '"></div></div>';
+                    html += '<div class="muted">Peak: ' + (m.peak_formatted || 'N/A') + '</div></div></div>';
+                    
+                    const diskPercent = d.percent || 0;
+                    const diskColor = diskPercent > 90 ? 'rgba(244,63,94,.8)' : diskPercent > 70 ? 'rgba(251,191,36,.8)' : 'rgba(16,185,129,.8)';
+                    html += '<div class="item"><div><strong>Disk</strong><div class="muted">Used: ' + (d.used_formatted || 'N/A') + ' / ' + (d.total_formatted || 'N/A') + ' (' + diskPercent + '%)</div>';
+                    html += '<div style="width:100%;height:6px;background:rgba(255,255,255,.1);border-radius:3px;margin:6px 0;overflow:hidden"><div style="width:' + diskPercent + '%;height:100%;background:' + diskColor + '"></div></div>';
+                    html += '<div class="muted">Free: ' + (d.free_formatted || 'N/A') + '</div><div class="muted">Data: ' + (d.data_size_formatted || 'N/A') + ' | Uploads: ' + (d.uploads_size_formatted || 'N/A') + '</div></div></div>';
+                    
+                    html += '<div class="item"><div><strong>System</strong><div class="muted">PHP: ' + (s.php_version || 'N/A') + '</div><div class="muted">Server: ' + (s.server_software || 'N/A') + '</div><div class="muted">Max execution: ' + (s.max_execution_time || 'N/A') + 's</div><div class="muted">Max upload: ' + (s.max_upload_size || 'N/A') + '</div><div class="muted">Post max: ' + (s.post_max_size || 'N/A') + '</div><div class="muted">Timezone: ' + (s.timezone || 'N/A') + '</div>';
+                    if (data.load) {
+                      html += '<div class="muted">Load avg: ' + (data.load['1min'] || 0).toFixed(2) + ' / ' + (data.load['5min'] || 0).toFixed(2) + ' / ' + (data.load['15min'] || 0).toFixed(2) + '</div>';
+                    } else if (s.load_average) {
+                      html += '<div class="muted">Load: ' + s.load_average.map(v => v.toFixed(2)).join(', ') + '</div>';
+                    }
+                    html += '</div></div>';
+                    
+                    html += '<div class="item"><div><strong>Network</strong><div class="muted">Hostname: ' + (n.hostname || 'N/A') + '</div><div class="muted">Server IP: ' + (n.server_addr || 'N/A') + '</div><div class="muted">Your IP: ' + (n.remote_addr || 'N/A') + '</div></div></div>';
+                    
+                    html += '<div class="item"><div><strong>Files</strong><div class="muted">Data files: ' + (f.data_files || 0) + ' in ' + (f.data_dirs || 0) + ' dirs</div><div class="muted">Upload files: ' + (f.upload_files || 0) + ' in ' + (f.upload_dirs || 0) + ' dirs</div></div></div>';
+                    
+                    if (errs.length > 0) {
+                      html += '<details style="margin-top:10px"><summary style="cursor:pointer;font-weight:800"><strong>Error Logs (' + errs.length + ')</strong></summary>';
+                      html += '<div style="max-height:400px;overflow:auto;margin-top:10px;padding:12px;background:rgba(0,0,0,.4);border-radius:8px;border:1px solid rgba(255,255,255,.1);font-family:ui-monospace,monospace;font-size:11px;line-height:1.6">';
+                      errs.slice(0, 100).forEach(e => {
+                        const isError = e && (e.indexOf('[ERROR]') >= 0 || e.indexOf('error') >= 0 || e.indexOf('Error') >= 0);
+                        const color = isError ? 'rgba(244,63,94,.8)' : 'rgba(255,255,255,.65)';
+                        html += '<div style="margin-bottom:6px;color:' + color + ';word-break:break-all">' + (e ? htmlspecialchars(e) : '') + '</div>';
+                      });
+                      html += '</div></details>';
+                    } else {
+                      html += '<div class="item"><div><strong>Error Logs</strong><div class="muted" style="color:rgba(16,185,129,.8)">No recent errors</div></div></div>';
+                    }
+                    
+                    html += '</div>';
+                    html += '<div class="muted" style="margin-top:10px;text-align:right">Last updated: ' + new Date().toLocaleTimeString() + '</div>';
+                    el.innerHTML = html;
+                  })
+                  .catch(e => {
+                    el.innerHTML = '<div class="err">Error loading monitoring data: ' + e.message + '</div>';
+                  });
+              }
+              load();
+              setInterval(load, 10000);
+            })();
+            function htmlspecialchars(str) {
+              const div = document.createElement('div');
+              div.textContent = str;
+              return div.innerHTML;
+            }
+          </script>
+        </details>
+
+        <details style="margin-top:14px">
           <summary>Traffic</summary>
           <div class="muted" style="margin:10px 0">Latest unique visitors. Country is only available if the host provides it (e.g. Cloudflare).</div>
 
