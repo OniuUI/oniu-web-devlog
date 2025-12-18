@@ -11,6 +11,8 @@
   },
   "dependencies": {
     "@types/three": "^0.182.0",
+    "highcharts": "^12.4.0",
+    "highcharts-react-official": "^3.2.3",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-router-dom": "^7.10.1",

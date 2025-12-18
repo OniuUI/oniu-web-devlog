@@ -391,19 +391,162 @@ if (count($trafficUsers) > 400) $trafficUsers = array_slice($trafficUsers, 0, 40
           </form>
         </details>
 
-        <details style="margin-top:14px">
+        <details style="margin-top:14px" open>
           <summary>Monitoring</summary>
-          <div class="muted" style="margin:10px 0">Server performance, resource usage, and diagnostics.</div>
+          <div class="muted" style="margin:10px 0">Server performance, resource usage, and diagnostics with historical trends.</div>
+          <div style="margin:10px 0">
+            <label class="muted">History: </label>
+            <select id="history-hours" style="margin-left:8px">
+              <option value="1">Last hour</option>
+              <option value="6">Last 6 hours</option>
+              <option value="24" selected>Last 24 hours</option>
+              <option value="48">Last 48 hours</option>
+              <option value="168">Last week</option>
+            </select>
+          </div>
+          <div id="monitor-charts" style="margin:20px 0"></div>
           <div id="monitor-data" style="margin:10px 0">
             <div class="muted">Loading...</div>
           </div>
+          <script src="/lib/highcharts/highcharts.js"></script>
+          <script src="/lib/highcharts/drilldown.js"></script>
           <script>
             (function() {
               const el = document.getElementById('monitor-data');
+              const chartsEl = document.getElementById('monitor-charts');
+              const historySelect = document.getElementById('history-hours');
+              let charts = {};
+              
+              function renderCharts(data) {
+                if (!data.history || !Array.isArray(data.history) || data.history.length === 0) {
+                  chartsEl.innerHTML = '<div class="muted" style="padding:20px;text-align:center">No historical data yet. Data will appear after a few minutes.</div>';
+                  return;
+                }
+                
+                const history = data.history;
+                const hours = parseInt(historySelect.value) || 24;
+                
+                chartsEl.innerHTML = '<div id="memory-chart" style="height:300px;margin-bottom:20px"></div><div id="cpu-chart" style="height:300px;margin-bottom:20px"></div><div id="disk-chart" style="height:300px;margin-bottom:20px"></div><div id="load-chart" style="height:300px"></div>';
+                
+                const memData = history.map(h => [h.ts, h.memory ? (h.memory.used || 0) : null]).filter(d => d[1] !== null);
+                const memPeak = history.map(h => [h.ts, h.memory ? (h.memory.peak || 0) : null]).filter(d => d[1] !== null);
+                const memPercent = history.map(h => [h.ts, h.memory && h.memory.percent !== undefined ? h.memory.percent : null]).filter(d => d[1] !== null);
+                const memLimit = history.map(h => [h.ts, h.memory ? (h.memory.limit || 0) : null]).filter(d => d[1] !== null && d[1] > 0);
+                const memAvg = memData.length > 0 ? memData.reduce((sum, d) => sum + d[1], 0) / memData.length : 0;
+                const memMax = memData.length > 0 ? Math.max(...memData.map(d => d[1])) : 0;
+                
+                if (memData.length > 0 && typeof Highcharts !== 'undefined') {
+                  Highcharts.chart('memory-chart', {
+                    title: { text: 'Memory Usage', style: { color: '#eef2ff', fontSize: '14px' } },
+                    chart: { backgroundColor: 'rgba(3,7,18,.3)', height: 300 },
+                    xAxis: { type: 'datetime', labels: { style: { color: '#9ca3af' } } },
+                    yAxis: [
+                      { title: { text: 'Bytes', style: { color: '#9ca3af' } }, labels: { style: { color: '#9ca3af' }, formatter: function() { return formatBytes(this.value); } }, opposite: false },
+                      { title: { text: 'Percentage', style: { color: '#9ca3af' } }, labels: { style: { color: '#9ca3af' }, formatter: function() { return this.value + '%'; } }, min: 0, max: 100, opposite: true }
+                    ],
+                    legend: { itemStyle: { color: '#9ca3af' } },
+                    tooltip: { 
+                      backgroundColor: 'rgba(3,7,18,.9)', 
+                      style: { color: '#eef2ff' }, 
+                      shared: true,
+                      formatter: function() {
+                        let s = Highcharts.dateFormat('%Y-%m-%d %H:%M:%S', this.x) + '<br/>';
+                        this.points.forEach(p => {
+                          if (p.series.yAxis.options.title.text === 'Percentage') {
+                            s += '<b>' + p.series.name + '</b>: ' + p.y.toFixed(1) + '%<br/>';
+                          } else {
+                            s += '<b>' + p.series.name + '</b>: ' + formatBytes(p.y) + '<br/>';
+                          }
+                        });
+                        return s;
+                      }
+                    },
+                    series: [
+                      { name: 'Used', data: memData, color: '#10b981', type: 'line', yAxis: 0 },
+                      { name: 'Peak', data: memPeak, color: '#f59e0b', type: 'line', dashStyle: 'dash', yAxis: 0 },
+                      { name: 'Limit', data: memLimit, color: '#ef4444', type: 'line', dashStyle: 'dot', yAxis: 0 },
+                      { name: 'Usage %', data: memPercent, color: '#3b82f6', type: 'line', yAxis: 1 },
+                      { name: 'Avg Used', data: history.map(h => [h.ts, memAvg]), color: '#6366f1', type: 'line', dashStyle: 'dot', enableMouseTracking: false, yAxis: 0 }
+                    ],
+                    plotOptions: { series: { marker: { radius: 2 } } }
+                  });
+                }
+                
+                const cpuData = history.map(h => [h.ts, h.cpu && h.cpu.load_avg ? h.cpu.load_avg['1min'] : null]).filter(d => d[1] !== null);
+                const cpuAvg = cpuData.length > 0 ? cpuData.reduce((sum, d) => sum + d[1], 0) / cpuData.length : 0;
+                const cpuMax = cpuData.length > 0 ? Math.max(...cpuData.map(d => d[1])) : 0;
+                
+                if (cpuData.length > 0 && typeof Highcharts !== 'undefined') {
+                  Highcharts.chart('cpu-chart', {
+                    title: { text: 'CPU Load Average (1min)', style: { color: '#eef2ff', fontSize: '14px' } },
+                    chart: { backgroundColor: 'rgba(3,7,18,.3)', height: 300 },
+                    xAxis: { type: 'datetime', labels: { style: { color: '#9ca3af' } } },
+                    yAxis: { title: { text: 'Load', style: { color: '#9ca3af' } }, labels: { style: { color: '#9ca3af' } } },
+                    legend: { itemStyle: { color: '#9ca3af' } },
+                    tooltip: { backgroundColor: 'rgba(3,7,18,.9)', style: { color: '#eef2ff' }, formatter: function() { return '<b>' + this.series.name + '</b><br/>' + Highcharts.dateFormat('%Y-%m-%d %H:%M:%S', this.x) + '<br/>' + this.y.toFixed(2); } },
+                    series: [
+                      { name: 'Load (1min)', data: cpuData, color: '#3b82f6', type: 'line' },
+                      { name: 'Average', data: history.map(h => [h.ts, cpuAvg]), color: '#6366f1', type: 'line', dashStyle: 'dot', enableMouseTracking: false }
+                    ],
+                    plotOptions: { series: { marker: { radius: 2 } } }
+                  });
+                }
+                
+                const diskData = history.map(h => [h.ts, h.disk ? (h.disk.used || 0) : null]).filter(d => d[1] !== null);
+                const diskAvg = diskData.length > 0 ? diskData.reduce((sum, d) => sum + d[1], 0) / diskData.length : 0;
+                
+                if (diskData.length > 0 && typeof Highcharts !== 'undefined') {
+                  Highcharts.chart('disk-chart', {
+                    title: { text: 'Disk Usage', style: { color: '#eef2ff', fontSize: '14px' } },
+                    chart: { backgroundColor: 'rgba(3,7,18,.3)', height: 300 },
+                    xAxis: { type: 'datetime', labels: { style: { color: '#9ca3af' } } },
+                    yAxis: { title: { text: 'Bytes', style: { color: '#9ca3af' } }, labels: { style: { color: '#9ca3af' }, formatter: function() { return formatBytes(this.value); } } },
+                    legend: { itemStyle: { color: '#9ca3af' } },
+                    tooltip: { backgroundColor: 'rgba(3,7,18,.9)', style: { color: '#eef2ff' }, formatter: function() { return '<b>' + this.series.name + '</b><br/>' + Highcharts.dateFormat('%Y-%m-%d %H:%M:%S', this.x) + '<br/>' + formatBytes(this.y); } },
+                    series: [
+                      { name: 'Used', data: diskData, color: '#ef4444', type: 'line' },
+                      { name: 'Average', data: history.map(h => [h.ts, diskAvg]), color: '#6366f1', type: 'line', dashStyle: 'dot', enableMouseTracking: false }
+                    ],
+                    plotOptions: { series: { marker: { radius: 2 } } }
+                  });
+                }
+                
+                const load1Data = history.map(h => [h.ts, h.load ? h.load['1min'] : null]).filter(d => d[1] !== null);
+                const load5Data = history.map(h => [h.ts, h.load ? h.load['5min'] : null]).filter(d => d[1] !== null);
+                const load15Data = history.map(h => [h.ts, h.load ? h.load['15min'] : null]).filter(d => d[1] !== null);
+                
+                if (load1Data.length > 0 && typeof Highcharts !== 'undefined') {
+                  Highcharts.chart('load-chart', {
+                    title: { text: 'System Load Average', style: { color: '#eef2ff', fontSize: '14px' } },
+                    chart: { backgroundColor: 'rgba(3,7,18,.3)', height: 300 },
+                    xAxis: { type: 'datetime', labels: { style: { color: '#9ca3af' } } },
+                    yAxis: { title: { text: 'Load', style: { color: '#9ca3af' } }, labels: { style: { color: '#9ca3af' } } },
+                    legend: { itemStyle: { color: '#9ca3af' } },
+                    tooltip: { backgroundColor: 'rgba(3,7,18,.9)', style: { color: '#eef2ff' }, shared: true, formatter: function() { let s = Highcharts.dateFormat('%Y-%m-%d %H:%M:%S', this.x) + '<br/>'; this.points.forEach(p => { s += '<b>' + p.series.name + '</b>: ' + p.y.toFixed(2) + '<br/>'; }); return s; } },
+                    series: [
+                      { name: '1 min', data: load1Data, color: '#3b82f6', type: 'line' },
+                      { name: '5 min', data: load5Data, color: '#10b981', type: 'line' },
+                      { name: '15 min', data: load15Data, color: '#f59e0b', type: 'line' }
+                    ],
+                    plotOptions: { series: { marker: { radius: 2 } } }
+                  });
+                }
+              }
+              
+              function formatBytes(bytes) {
+                if (bytes === 0) return '0 B';
+                const k = 1024;
+                const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+                const i = Math.floor(Math.log(bytes) / Math.log(k));
+                return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+              }
+              
               function load() {
-                fetch('/admin/monitor.php', { cache: 'no-store' })
+                const hours = historySelect.value || '24';
+                fetch('/admin/monitor.php?history_hours=' + hours, { cache: 'no-store' })
                   .then(r => r.json())
                   .then(data => {
+                    renderCharts(data);
                     if (!data.ok) {
                       el.innerHTML = '<div class="err">Failed to load monitoring data</div>';
                       return;
@@ -429,13 +572,35 @@ if (count($trafficUsers) > 400) $trafficUsers = array_slice($trafficUsers, 0, 40
                     html += '<div style="width:100%;height:6px;background:rgba(255,255,255,.1);border-radius:3px;margin:6px 0;overflow:hidden"><div style="width:' + diskPercent + '%;height:100%;background:' + diskColor + '"></div></div>';
                     html += '<div class="muted">Free: ' + (d.free_formatted || 'N/A') + '</div><div class="muted">Data: ' + (d.data_size_formatted || 'N/A') + ' | Uploads: ' + (d.uploads_size_formatted || 'N/A') + '</div></div></div>';
                     
-                    html += '<div class="item"><div><strong>System</strong><div class="muted">PHP: ' + (s.php_version || 'N/A') + '</div><div class="muted">Server: ' + (s.server_software || 'N/A') + '</div><div class="muted">Max execution: ' + (s.max_execution_time || 'N/A') + 's</div><div class="muted">Max upload: ' + (s.max_upload_size || 'N/A') + '</div><div class="muted">Post max: ' + (s.post_max_size || 'N/A') + '</div><div class="muted">Timezone: ' + (s.timezone || 'N/A') + '</div>';
-                    if (data.load) {
+                    const cpu = data.cpu || {};
+                    html += '<div class="item"><div><strong>CPU</strong>';
+                    if (cpu.cores) {
+                      html += '<div class="muted">Cores: ' + cpu.cores + '</div>';
+                    }
+                    if (cpu.model) {
+                      html += '<div class="muted" style="font-size:11px;word-break:break-all">' + htmlspecialchars(cpu.model) + '</div>';
+                    }
+                    if (cpu.load_avg) {
+                      const load1 = cpu.load_avg['1min'] || 0;
+                      const load5 = cpu.load_avg['5min'] || 0;
+                      const load15 = cpu.load_avg['15min'] || 0;
+                      html += '<div class="muted">Load avg: ' + load1.toFixed(2) + ' / ' + load5.toFixed(2) + ' / ' + load15.toFixed(2) + '</div>';
+                      if (cpu.load_percent !== null && cpu.load_percent !== undefined) {
+                        const loadColor = cpu.load_percent > 90 ? 'rgba(244,63,94,.8)' : cpu.load_percent > 70 ? 'rgba(251,191,36,.8)' : 'rgba(16,185,129,.8)';
+                        html += '<div class="muted">CPU usage: ' + cpu.load_percent + '%</div>';
+                        html += '<div style="width:100%;height:6px;background:rgba(255,255,255,.1);border-radius:3px;margin:6px 0;overflow:hidden"><div style="width:' + Math.min(cpu.load_percent, 100) + '%;height:100%;background:' + loadColor + '"></div></div>';
+                      }
+                    } else if (data.load) {
                       html += '<div class="muted">Load avg: ' + (data.load['1min'] || 0).toFixed(2) + ' / ' + (data.load['5min'] || 0).toFixed(2) + ' / ' + (data.load['15min'] || 0).toFixed(2) + '</div>';
                     } else if (s.load_average) {
                       html += '<div class="muted">Load: ' + s.load_average.map(v => v.toFixed(2)).join(', ') + '</div>';
                     }
+                    if (!cpu.cores && !cpu.load_avg && !data.load && !s.load_average) {
+                      html += '<div class="muted">CPU info not available</div>';
+                    }
                     html += '</div></div>';
+                    
+                    html += '<div class="item"><div><strong>System</strong><div class="muted">PHP: ' + (s.php_version || 'N/A') + '</div><div class="muted">Server: ' + (s.server_software || 'N/A') + '</div><div class="muted">Max execution: ' + (s.max_execution_time || 'N/A') + 's</div><div class="muted">Max upload: ' + (s.max_upload_size || 'N/A') + '</div><div class="muted">Post max: ' + (s.post_max_size || 'N/A') + '</div><div class="muted">Timezone: ' + (s.timezone || 'N/A') + '</div></div></div>';
                     
                     html += '<div class="item"><div><strong>Network</strong><div class="muted">Hostname: ' + (n.hostname || 'N/A') + '</div><div class="muted">Server IP: ' + (n.server_addr || 'N/A') + '</div><div class="muted">Your IP: ' + (n.remote_addr || 'N/A') + '</div></div></div>';
                     
@@ -463,6 +628,7 @@ if (count($trafficUsers) > 400) $trafficUsers = array_slice($trafficUsers, 0, 40
                   });
               }
               load();
+              historySelect.addEventListener('change', load);
               setInterval(load, 10000);
             })();
             function htmlspecialchars(str) {
