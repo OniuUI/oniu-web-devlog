@@ -72,7 +72,8 @@ def main() -> None:
     host = env("SFTP_HOST")
     username = env("SFTP_USER")
     password = env("SFTP_PASSWORD")
-    port = int(os.environ.get("SFTP_PORT", "22"))
+    port_raw = os.environ.get("SFTP_PORT", "22")
+    port = int(port_raw) if port_raw and port_raw.strip() else 22
 
     local_dist = Path(env("LOCAL_DIST", str(Path("oniu-web") / "dist"))).resolve()
     if not local_dist.exists() or not local_dist.is_dir():
