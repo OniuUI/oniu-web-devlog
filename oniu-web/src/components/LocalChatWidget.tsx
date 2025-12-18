@@ -133,14 +133,28 @@ export default function LocalChatWidget({ room = 'oniu' }: { room?: string }) {
       if (modChanged && mod) {
         const deletedIds = Array.isArray(mod.deleted_ids) ? mod.deleted_ids : []
         const clearedBefore = typeof mod.cleared_before_ts === 'number' ? mod.cleared_before_ts : 0
-        if (deletedIds.length > 0 || clearedBefore > 0) {
+        
+        if (clearedBefore > 0) {
+          saveChatCache(storageKey, [])
+          setMessages([])
+          setLastSeen(clearedBefore)
+          lastSeenRef.current = clearedBefore
+          return
+        }
+        
+        if (deletedIds.length > 0) {
           const local = loadChatCache(storageKey)
           const filtered = applyMod(local, mod)
           saveChatCache(storageKey, filtered)
           setMessages(filtered)
           const ts = lastTimestamp(filtered)
-          if (ts) setLastSeen(ts)
-          else if (typeof serverNow === 'number' && serverNow > 0) setLastSeen(serverNow)
+          if (ts) {
+            setLastSeen(ts)
+            lastSeenRef.current = ts
+          } else if (typeof serverNow === 'number' && serverNow > 0) {
+            setLastSeen(serverNow)
+            lastSeenRef.current = serverNow
+          }
           return
         }
       }
@@ -156,8 +170,13 @@ export default function LocalChatWidget({ room = 'oniu' }: { room?: string }) {
         if (soundReady) playMessageSound()
       }
       const ts = lastTimestamp(afterMod)
-      if (ts) setLastSeen(ts)
-      else if (typeof serverNow === 'number' && serverNow > 0) setLastSeen(serverNow)
+      if (ts) {
+        setLastSeen(ts)
+        lastSeenRef.current = ts
+      } else if (typeof serverNow === 'number' && serverNow > 0) {
+        setLastSeen(serverNow)
+        lastSeenRef.current = serverNow
+      }
     }
 
     const pollOnce = async (timeout: number) => {
@@ -199,7 +218,7 @@ export default function LocalChatWidget({ room = 'oniu' }: { room?: string }) {
 
       while (!cancelled) {
         try {
-          await pollOnce(25)
+          await pollOnce(20)
         } catch (e: unknown) {
           if ((e as { name?: string })?.name === 'AbortError') continue
           setNet('offline')
@@ -286,10 +305,18 @@ export default function LocalChatWidget({ room = 'oniu' }: { room?: string }) {
       }
       const data = (await res.json()) as { mod?: ChatMod }
       if (data.mod) {
-        const local = loadChatCache(storageKey)
-        const filtered = applyMod(local, data.mod)
-        saveChatCache(storageKey, filtered)
-        setMessages(filtered)
+        const clearedBefore = typeof data.mod.cleared_before_ts === 'number' ? data.mod.cleared_before_ts : 0
+        if (clearedBefore > 0) {
+          saveChatCache(storageKey, [])
+          setMessages([])
+          setLastSeen(clearedBefore)
+          lastSeenRef.current = clearedBefore
+        } else {
+          const local = loadChatCache(storageKey)
+          const filtered = applyMod(local, data.mod)
+          saveChatCache(storageKey, filtered)
+          setMessages(filtered)
+        }
         lastModRef.current = JSON.stringify(data.mod)
       }
     } catch {

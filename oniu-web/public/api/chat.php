@@ -164,6 +164,7 @@ function save_moderation(string $room, array $data): void {
   } finally {
     fclose($fp);
   }
+  @touch($file);
 }
 
 function ip_is_banned(array $mod, string $ip): bool {
@@ -392,6 +393,7 @@ if ($method === 'POST') {
 
     $mod = load_moderation($room);
     $file = chat_file($room);
+    $modFile = moderation_file($room);
     $now = now_ms();
 
     if ($action === 'pause') {
@@ -467,7 +469,6 @@ if ($method === 'POST') {
       respond(200, ['ok' => true, 'kept' => $kept, 'mod' => mod_payload($mod)]);
     }
     if ($action === 'clear_history') {
-      // Archive current file then start fresh.
       if (file_exists($file)) {
         $arch = data_dir() . '/chat-' . $room . '-' . date('Ymd-His') . '.jsonl';
         @rename($file, $arch);
@@ -475,6 +476,7 @@ if ($method === 'POST') {
       $mod['cleared_before_ts'] = $now;
       $mod['deleted_ids'] = [];
       save_moderation($room, $mod);
+      touch($modFile);
       respond(200, ['ok' => true, 'mod' => mod_payload($mod)]);
     }
     if ($action === 'clear_by_ip') {
