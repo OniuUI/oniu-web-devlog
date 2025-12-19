@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { rtcPoll, type RtcSignal } from '@/lib/rtc'
+import { rtcPoll } from '@/lib/rtc'
 
 type UseRtcInvitesProps = {
   room: string

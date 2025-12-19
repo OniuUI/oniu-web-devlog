@@ -65,7 +65,7 @@ export default function VideoChatPanel({ room, selfCid, selfName, peers, onClose
     room: activeRoom,
     selfCid,
     enabled: true,
-    onInvite: (inviteRoom, from, fromName) => {
+    onInvite: (inviteRoom, _from, fromName) => {
       if (confirm(`${fromName} invited you to join room "${inviteRoom}". Join?`)) {
         void joinRoom(inviteRoom)
       }
