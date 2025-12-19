@@ -403,6 +403,35 @@ export default function MonitoringDashboard() {
           <div className="mt-1 text-xs text-neutral-400">Server: {data.system.server_software}</div>
         </div>
       </div>
+
+      {data.errors && data.errors.length > 0 ? (
+        <div className="rounded-2xl bg-neutral-950/30 p-4 ring-1 ring-white/10">
+          <details className="cursor-pointer">
+            <summary className="text-sm font-semibold text-neutral-200 mb-2">
+              Error Logs ({data.errors.length})
+            </summary>
+            <div className="mt-3 max-h-96 overflow-auto rounded-lg bg-neutral-950/50 p-3 ring-1 ring-white/5">
+              <div className="space-y-1 font-mono text-[11px]">
+                {data.errors.slice(0, 100).map((log, idx) => {
+                  const isError = log.includes('[ERROR]') || log.toLowerCase().includes('error')
+                  const isVideo = log.includes('video_upload.php') || log.includes('Video')
+                  const color = isError ? 'text-rose-300' : isVideo ? 'text-blue-300' : 'text-neutral-400'
+                  return (
+                    <div key={idx} className={`${color} break-words`}>
+                      {log}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          </details>
+        </div>
+      ) : (
+        <div className="rounded-2xl bg-neutral-950/30 p-4 ring-1 ring-white/10">
+          <div className="text-sm font-semibold text-neutral-200">Error Logs</div>
+          <div className="mt-2 text-xs text-green-400">No recent errors</div>
+        </div>
+      )}
     </div>
   )
 }

@@ -120,22 +120,39 @@ if ($method === 'POST') {
   $body = read_json_body();
   $room = safe_room($body['room'] ?? 'global');
   $cid = safe_id($body['cid'] ?? null);
-  if (!$cid) respond(400, ['error' => 'missing_cid']);
+  if (!$cid) {
+    app_log_error("video_upload.php: missing_cid, room=$room");
+    respond(400, ['error' => 'missing_cid']);
+  }
   
   $chunkData = $body['chunk'] ?? null;
-  if (!is_string($chunkData)) respond(400, ['error' => 'missing_chunk']);
+  if (!is_string($chunkData)) {
+    app_log_error("video_upload.php: missing_chunk, room=$room, cid=$cid");
+    respond(400, ['error' => 'missing_chunk']);
+  }
   
   $base64Data = preg_replace('/^data:video\/[^;]+;base64,/', '', $chunkData);
   $binaryData = @base64_decode($base64Data, true);
-  if ($binaryData === false) respond(400, ['error' => 'invalid_base64']);
+  if ($binaryData === false) {
+    app_log_error("video_upload.php: invalid_base64, room=$room, cid=$cid");
+    respond(400, ['error' => 'invalid_base64']);
+  }
   
   $chunkId = bin2hex(random_bytes(8));
   $dir = uploads_dir() . '/video/' . $room . '/' . date('Y-m-d');
-  if (!is_dir($dir)) @mkdir($dir, 0755, true);
+  if (!is_dir($dir)) {
+    $created = @mkdir($dir, 0755, true);
+    if (!$created) {
+      app_log_error("video_upload.php: failed to create upload dir: $dir");
+      respond(500, ['error' => 'mkdir_failed']);
+    }
+  }
   $filename = $chunkId . '.webm';
   $filepath = $dir . '/' . $filename;
   
-  if (@file_put_contents($filepath, $binaryData) === false) {
+  $written = @file_put_contents($filepath, $binaryData);
+  if ($written === false) {
+    app_log_error("video_upload.php: write_failed, room=$room, cid=$cid, filepath=$filepath");
     respond(500, ['error' => 'write_failed']);
   }
   
@@ -151,6 +168,7 @@ if ($method === 'POST') {
   ];
   
   append_chunk(video_chunks_file($room), $chunk);
+  app_log_error("video_upload.php: SUCCESS - room=$room, cid=$cid, chunkId=$chunkId, size=" . strlen($binaryData));
   respond(200, ['ok' => true, 'chunk' => $chunk]);
 }
 
@@ -164,12 +182,16 @@ $file = video_chunks_file($room);
 $fileMtime = @filemtime($file);
 if ($fileMtime === false) $fileMtime = 0;
 
+app_log_error("video_upload.php: POLL START - room=$room, since=$since, timeout=$timeout, file=$file, fileExists=" . (file_exists($file) ? 'yes' : 'no'));
+
 if ($timeout === 0) {
+  $chunks = read_chunks_since($file, $since, 100);
+  app_log_error("video_upload.php: POLL IMMEDIATE - room=$room, chunks=" . count($chunks));
   respond(200, [
     'ok' => true,
     'room' => $room,
     'now' => now_ms(),
-    'chunks' => read_chunks_since($file, $since, 100),
+    'chunks' => $chunks,
   ]);
 }
 
@@ -178,16 +200,19 @@ while (true) {
   if ($curMtime === false) $curMtime = 0;
   if ($curMtime !== $fileMtime) {
     $fileMtime = $curMtime;
+    $chunks = read_chunks_since($file, $since, 100);
+    app_log_error("video_upload.php: POLL FILE CHANGED - room=$room, chunks=" . count($chunks));
     respond(200, [
       'ok' => true,
       'room' => $room,
       'now' => now_ms(),
-      'chunks' => read_chunks_since($file, $since, 100),
+      'chunks' => $chunks,
     ]);
   }
   
   $chunks = read_chunks_since($file, $since, 100);
   if (count($chunks) > 0) {
+    app_log_error("video_upload.php: POLL CHUNKS FOUND - room=$room, chunks=" . count($chunks));
     respond(200, [
       'ok' => true,
       'room' => $room,
@@ -197,6 +222,7 @@ while (true) {
   }
   
   if ((time() - $start) >= $timeout) {
+    app_log_error("video_upload.php: POLL TIMEOUT - room=$room, timeout=$timeout");
     respond(200, [
       'ok' => true,
       'room' => $room,
