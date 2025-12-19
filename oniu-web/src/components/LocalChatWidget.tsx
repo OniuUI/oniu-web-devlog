@@ -3,6 +3,10 @@ import { applyMod, lastTimestamp, loadChatCache, mergeMessages, saveChatCache, t
 import { generateChatName } from '@/lib/nameGenerator'
 import VideoChatPanel from '@/components/VideoChatPanel'
 import { enableSound, playMessageSound } from '@/lib/sound'
+import { useChatPresence } from '@/lib/chat/useChatPresence'
+import { useOfflineQueue } from '@/lib/chat/useOfflineQueue'
+import { useAdminActions } from '@/lib/chat/useAdminActions'
+import AdminPanel from '@/components/chat/AdminPanel'
 
 function cx(...v: Array<string | false | null | undefined>) {
   return v.filter(Boolean).join(' ')
@@ -46,10 +50,6 @@ export default function LocalChatWidget({ room = 'oniu' }: { room?: string }) {
   const [adminOpen, setAdminOpen] = useState(false)
   const [videoOpen, setVideoOpen] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
-  const [presencePublic, setPresencePublic] = useState<Array<{ cid: string; name: string; lastSeen: number }>>([])
-  const [presence, setPresence] = useState<Array<{ cid: string; name: string; ip: string; lastSeen: number }>>([])
-  const [banned, setBanned] = useState<string[]>([])
-  const [muted, setMuted] = useState<Record<string, number>>({})
   const cid = useMemo(() => {
     const existing = localStorage.getItem('oniu.chat.cid')
     if (existing) return existing
@@ -66,8 +66,6 @@ export default function LocalChatWidget({ room = 'oniu' }: { room?: string }) {
   }, [lastSeen])
   const pollAbortRef = useRef<AbortController | null>(null)
 
-  const [adminBusy, setAdminBusy] = useState(false)
-  const [adminError, setAdminError] = useState<string | null>(null)
   const [userBusy, setUserBusy] = useState(false)
   const [lastReadTs, setLastReadTs] = useState(() => lastTimestamp(loadChatCache(storageKey)))
   const [soundReady, setSoundReady] = useState(false)
@@ -198,7 +196,6 @@ export default function LocalChatWidget({ room = 'oniu' }: { room?: string }) {
         presence?: Array<{ cid: string; name: string; lastSeen: number }> | null
       }
       setIsAdmin(Boolean(data.admin))
-      if (Array.isArray(data.presence)) setPresencePublic(data.presence)
       applyServer(Array.isArray(data.messages) ? data.messages : [], data.mod, data.now)
       setNet('online')
       setMode('global')
@@ -238,31 +235,21 @@ export default function LocalChatWidget({ room = 'oniu' }: { room?: string }) {
     }
   }, [apiUrl, cid, name, storageKey])
 
-  useEffect(() => {
-    if (net !== 'online' || mode !== 'global') return
-    const raw = localStorage.getItem(outboxKey)
-    const items = (raw ? (JSON.parse(raw) as unknown) : null) as ChatMessage[] | null
-    const queue = Array.isArray(items) ? items : []
-    if (queue.length === 0) return
+  const { presencePublic, onlineCount } = useChatPresence({
+    room,
+    cid,
+    name,
+    enabled: net === 'online' && mode === 'global',
+    apiUrl,
+  })
 
-    ;(async () => {
-      const remaining: ChatMessage[] = []
-      for (const m of queue) {
-        try {
-          const r = await fetch('/api/chat.php', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            cache: 'no-store',
-            body: JSON.stringify({ room, cid, id: m.id, name: m.name, text: m.text }),
-          })
-          if (!r.ok) remaining.push(m)
-        } catch {
-          remaining.push(m)
-        }
-      }
-      localStorage.setItem(outboxKey, JSON.stringify(remaining))
-    })()
-  }, [net, mode, outboxKey, room, cid])
+  useOfflineQueue({
+    room,
+    cid,
+    outboxKey,
+    isOnline: net === 'online',
+    mode,
+  })
 
   useEffect(() => {
     if (!adminOpen) return
@@ -277,88 +264,33 @@ export default function LocalChatWidget({ room = 'oniu' }: { room?: string }) {
       .catch(() => {})
   }, [adminOpen, isAdmin, csrf])
 
-  useEffect(() => {
-    if (!adminOpen) return
-    if (!isAdmin) return
-    if (!csrf) return
-    void refreshAdminState()
-  }, [adminOpen, isAdmin, csrf])
-
   function kickPoll() {
     pollAbortRef.current?.abort()
   }
 
-  async function adminAction(payload: Record<string, unknown>) {
-    if (!csrf) return
-    setAdminBusy(true)
-    setAdminError(null)
-    try {
-      const res = await fetch('/api/chat.php', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        cache: 'no-store',
-        body: JSON.stringify({ room, csrf, ...payload }),
-      })
-      if (!res.ok) {
-        setAdminError(`Admin action failed (${res.status})`)
-        return
-      }
-      const data = (await res.json()) as { mod?: ChatMod }
-      if (data.mod) {
-        const clearedBefore = typeof data.mod.cleared_before_ts === 'number' ? data.mod.cleared_before_ts : 0
-        if (clearedBefore > 0) {
-          saveChatCache(storageKey, [])
-          setMessages([])
-          setLastSeen(clearedBefore)
-          lastSeenRef.current = clearedBefore
-        } else {
-          const local = loadChatCache(storageKey)
-          const filtered = applyMod(local, data.mod)
-          saveChatCache(storageKey, filtered)
-          setMessages(filtered)
-        }
-        lastModRef.current = JSON.stringify(data.mod)
-      }
-    } catch {
-      setAdminError('Admin action failed (network)')
-      return
-    } finally {
-      setAdminBusy(false)
+  function handleModUpdate(mod: ChatMod) {
+    const clearedBefore = typeof mod.cleared_before_ts === 'number' ? mod.cleared_before_ts : 0
+    if (clearedBefore > 0) {
+      setMessages([])
+      setLastSeen(clearedBefore)
+      lastSeenRef.current = clearedBefore
+    } else {
+      const local = loadChatCache(storageKey)
+      const filtered = applyMod(local, mod)
+      saveChatCache(storageKey, filtered)
+      setMessages(filtered)
     }
-    kickPoll()
-    await refreshAdminState()
+    lastModRef.current = JSON.stringify(mod)
   }
 
-  async function refreshAdminState() {
-    if (!csrf) return
-    setAdminBusy(true)
-    setAdminError(null)
-    try {
-      const res = await fetch('/api/chat.php', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        cache: 'no-store',
-        body: JSON.stringify({ room, csrf, action: 'list_state' }),
-      })
-      if (!res.ok) {
-        setAdminError(`Refresh failed (${res.status})`)
-        return
-      }
-      const data = (await res.json()) as unknown
-      const d = data as {
-        presence?: Array<{ cid: string; name: string; ip: string; lastSeen: number }>
-        banned?: string[]
-        muted?: Record<string, number>
-      }
-      if (Array.isArray(d.presence)) setPresence(d.presence)
-      if (Array.isArray(d.banned)) setBanned(d.banned)
-      if (d.muted && typeof d.muted === 'object') setMuted(d.muted)
-    } catch {
-      setAdminError('Refresh failed (network)')
-    } finally {
-      setAdminBusy(false)
-    }
-  }
+  const { adminAction, adminBusy } = useAdminActions({
+    room,
+    storageKey,
+    isAdmin,
+    csrf,
+    onModUpdate: handleModUpdate,
+    onPollKick: kickPoll,
+  })
 
   async function deleteOwn(id: string) {
     if (!id) return
@@ -496,10 +428,10 @@ export default function LocalChatWidget({ room = 'oniu' }: { room?: string }) {
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <div className="truncate text-sm font-semibold">Chat</div>
-                {presencePublic.length > 0 ? (
+                {onlineCount > 0 ? (
                   <div className="flex items-center gap-1.5">
                     <div className="h-2 w-2 rounded-full bg-green-500"></div>
-                    <span className="text-xs font-semibold text-green-400">{presencePublic.length}</span>
+                    <span className="text-xs font-semibold text-green-400">{onlineCount}</span>
                   </div>
                 ) : null}
               </div>
@@ -547,150 +479,15 @@ export default function LocalChatWidget({ room = 'oniu' }: { room?: string }) {
             </div>
           </div>
 
-          {adminOpen && isAdmin ? (
-            <div className="max-h-[28svh] overflow-auto border-b border-white/10 px-4 py-3">
-              <div className="flex flex-wrap gap-2">
-                <button
-                  onClick={() => void refreshAdminState()}
-                  className="rounded-xl px-3 py-1.5 text-xs text-neutral-200 ring-1 ring-white/10 hover:bg-white/5"
-                  disabled={!csrf || adminBusy}
-                >
-                  {adminBusy ? 'Loading' : 'Refresh'}
-                </button>
-                <button
-                  onClick={() => void adminAction({ action: 'pause', seconds: 60 })}
-                  className="rounded-xl px-3 py-1.5 text-xs text-neutral-200 ring-1 ring-white/10 hover:bg-white/5"
-                  disabled={!csrf || adminBusy}
-                >
-                  Pause 1m
-                </button>
-                <button
-                  onClick={() => void adminAction({ action: 'pause', seconds: 0 })}
-                  className="rounded-xl px-3 py-1.5 text-xs text-neutral-200 ring-1 ring-white/10 hover:bg-white/5"
-                  disabled={!csrf || adminBusy}
-                >
-                  Resume
-                </button>
-                <button
-                  onClick={() => void adminAction({ action: 'clear_history' })}
-                  className="rounded-xl px-3 py-1.5 text-xs text-rose-200 ring-1 ring-rose-500/30 hover:bg-rose-500/10"
-                  disabled={!csrf || adminBusy}
-                >
-                  Clear history
-                </button>
-              </div>
-              {adminError ? <div className="mt-2 text-[11px] text-rose-300">{adminError}</div> : null}
-              <div className="mt-3 grid gap-3">
-                <div>
-                  <div className="text-[11px] font-semibold text-neutral-200">Connected users</div>
-                  <div className="mt-2 max-h-28 overflow-auto rounded-xl ring-1 ring-white/10">
-                    {presence.length === 0 ? (
-                      <div className="px-3 py-2 text-[11px] text-neutral-500">No presence data yet.</div>
-                    ) : (
-                      presence.map((u) => (
-                        <div key={u.cid} className="flex items-center justify-between gap-2 px-3 py-2 text-[11px] hover:bg-white/5">
-                          <div className="min-w-0">
-                            <div className="truncate text-neutral-200">{u.name || u.cid}</div>
-                            <div className="truncate text-neutral-500">{u.ip}</div>
-                          </div>
-                          <div className="flex gap-1">
-                            {muted[u.ip] && muted[u.ip] > Date.now() ? (
-                              <button
-                                onClick={() => void adminAction({ action: 'unmute', ip: u.ip })}
-                                className="rounded-md px-2 py-0.5 text-[10px] text-neutral-200 ring-1 ring-white/10 hover:bg-white/5"
-                                disabled={!csrf || adminBusy}
-                              >
-                                Unmute
-                              </button>
-                            ) : (
-                              <button
-                                onClick={() => void adminAction({ action: 'mute', ip: u.ip, minutes: 10 })}
-                                className="rounded-md px-2 py-0.5 text-[10px] text-neutral-200 ring-1 ring-white/10 hover:bg-white/5"
-                                disabled={!csrf || adminBusy}
-                              >
-                                Mute
-                              </button>
-                            )}
-                            {banned.includes(u.ip) ? (
-                              <button
-                                onClick={() => void adminAction({ action: 'unban', ip: u.ip })}
-                                className="rounded-md px-2 py-0.5 text-[10px] text-neutral-200 ring-1 ring-white/10 hover:bg-white/5"
-                                disabled={!csrf || adminBusy}
-                              >
-                                Unban
-                              </button>
-                            ) : (
-                              <button
-                                onClick={() => void adminAction({ action: 'ban', ip: u.ip })}
-                                className="rounded-md px-2 py-0.5 text-[10px] text-rose-200 ring-1 ring-rose-500/30 hover:bg-rose-500/10"
-                                disabled={!csrf || adminBusy}
-                              >
-                                Ban
-                              </button>
-                            )}
-                            <button
-                              onClick={() => void adminAction({ action: 'clear_by_ip', ip: u.ip })}
-                              className="rounded-md px-2 py-0.5 text-[10px] text-rose-200 ring-1 ring-rose-500/30 hover:bg-rose-500/10"
-                              disabled={!csrf || adminBusy}
-                            >
-                              Purge
-                            </button>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <div className="text-[11px] font-semibold text-neutral-200">Banned</div>
-                    <div className="mt-1 max-h-20 overflow-auto rounded-xl ring-1 ring-white/10">
-                      {banned.length === 0 ? (
-                        <div className="px-3 py-2 text-[11px] text-neutral-500">None</div>
-                      ) : (
-                        banned.map((ip) => (
-                          <div key={ip} className="flex items-center justify-between gap-2 px-3 py-2 text-[11px] hover:bg-white/5">
-                            <div className="truncate text-neutral-300">{ip}</div>
-                            <button
-                              onClick={() => void adminAction({ action: 'unban', ip })}
-                              className="rounded-md px-2 py-0.5 text-[10px] text-neutral-200 ring-1 ring-white/10 hover:bg-white/5"
-                              disabled={!csrf || adminBusy}
-                            >
-                              Unban
-                            </button>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-[11px] font-semibold text-neutral-200">Muted</div>
-                    <div className="mt-1 max-h-20 overflow-auto rounded-xl ring-1 ring-white/10">
-                      {Object.keys(muted).length === 0 ? (
-                        <div className="px-3 py-2 text-[11px] text-neutral-500">None</div>
-                      ) : (
-                        Object.entries(muted).map(([ip]) => (
-                          <div key={ip} className="flex items-center justify-between gap-2 px-3 py-2 text-[11px] hover:bg-white/5">
-                            <div className="truncate text-neutral-300">{ip}</div>
-                            <button
-                              onClick={() => void adminAction({ action: 'unmute', ip })}
-                              className="rounded-md px-2 py-0.5 text-[10px] text-neutral-200 ring-1 ring-white/10 hover:bg-white/5"
-                              disabled={!csrf || adminBusy}
-                            >
-                              Unmute
-                            </button>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div className="mt-2 text-[11px] text-neutral-500">
-                Admin actions require being logged in at <span className="text-neutral-300">/admin/</span>.
-              </div>
-            </div>
+          {adminOpen ? (
+            <AdminPanel
+              room={room}
+              storageKey={storageKey}
+              isAdmin={isAdmin}
+              csrf={csrf}
+              onModUpdate={handleModUpdate}
+              onPollKick={kickPoll}
+            />
           ) : null}
 
           {videoOpen ? (
