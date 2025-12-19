@@ -4,6 +4,7 @@ import { useVideoRecording } from '@/lib/video/useVideoRecording'
 import { useVideoChunkPolling } from '@/lib/video/useVideoChunkPolling'
 import { useRoomPresence } from '@/lib/video/useRoomPresence'
 import { useRoomManagement } from '@/lib/video/useRoomManagement'
+import { useRtcInvites } from '@/lib/video/useRtcInvites'
 import RoomManagement from '@/components/video/RoomManagement'
 import UserList from '@/components/video/UserList'
 import VideoHeader from '@/components/video/VideoHeader'
@@ -58,6 +59,17 @@ export default function VideoChatPanel({ room, selfCid, selfName, peers, onClose
     selfCid,
     joined,
     onError: setError,
+  })
+
+  useRtcInvites({
+    room: activeRoom,
+    selfCid,
+    enabled: true,
+    onInvite: (inviteRoom, from, fromName) => {
+      if (confirm(`${fromName} invited you to join room "${inviteRoom}". Join?`)) {
+        void joinRoom(inviteRoom)
+      }
+    },
   })
 
   useEffect(() => {

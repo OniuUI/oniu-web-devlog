@@ -19,12 +19,12 @@ export default function UserList({ participants, selfCid, activeRoom, selfName, 
   async function inviteUser(targetCid: string, targetRoom: string) {
     try {
       await rtcSend({
-        room: targetRoom,
+        room: 'rtc',
         channel: targetRoom,
         from: selfCid,
         to: targetCid,
         type: 'join',
-        payload: { name: selfName, invite: true },
+        payload: { name: selfName, invite: true, room: targetRoom },
       })
       setShowInviteUser(false)
       setInviteTargetCid('')

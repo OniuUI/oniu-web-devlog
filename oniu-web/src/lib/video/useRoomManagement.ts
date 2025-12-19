@@ -45,6 +45,15 @@ export function useRoomManagement({
     setActiveRoom(targetRoom)
     setJoined(true)
     await syncRef.current(targetRoom)
+    try {
+      await rtcSend({
+        room: targetRoom,
+        channel: targetRoom,
+        from: selfCid,
+        type: 'join',
+        payload: { name: selfName },
+      })
+    } catch {}
     setJoining(false)
   }
 
