@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { uploadVideoChunk } from '@/lib/videoCdn'
 
 export function useVideoRecording(room: string, cid: string, enabled: boolean) {
+  console.log(`[VideoRecording] HOOK CALLED - room: "${room}", cid: ${cid}, enabled: ${enabled}`)
   const [localStream, setLocalStream] = useState<MediaStream | null>(null)
   const recorderRef = useRef<MediaRecorder | null>(null)
   const roomRef = useRef(room)
@@ -127,8 +128,16 @@ export function useVideoRecording(room: string, cid: string, enabled: boolean) {
   }
 
   function stopRecording() {
-    if (recorderRef.current && recorderRef.current.state !== 'inactive') {
-      recorderRef.current.stop()
+    if (recorderRef.current) {
+      const state = recorderRef.current.state
+      console.log(`[VideoRecording] Stopping recorder, current state: ${state}`)
+      if (state !== 'inactive') {
+        try {
+          recorderRef.current.stop()
+        } catch (e) {
+          console.error(`[VideoRecording] Error stopping recorder:`, e)
+        }
+      }
       recorderRef.current = null
     }
   }
@@ -137,6 +146,7 @@ export function useVideoRecording(room: string, cid: string, enabled: boolean) {
     console.log(`[VideoRecording] useEffect triggered - enabled: ${enabled}, room: "${room}", cid: ${cid}`)
     
     if (!enabled) {
+      console.log(`[VideoRecording] Recording disabled - stopping any active recording`)
       stopRecording()
       console.log(`[VideoRecording] Recording stopped - enabled: ${enabled}, room: ${room}`)
       return
@@ -155,9 +165,15 @@ export function useVideoRecording(room: string, cid: string, enabled: boolean) {
     console.log(`[VideoRecording] Starting recording - room: "${room}", cid: ${cid}, enabled: ${enabled}`)
     console.log(`[VideoRecording] MediaRecorder supported types:`, MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus') ? 'vp8,opus' : 'no', MediaRecorder.isTypeSupported('video/webm') ? 'webm' : 'no')
     
+    let cancelled = false
+    
     const start = async () => {
+      if (cancelled) return
       try {
         await startRecording()
+        if (!cancelled && recorderRef.current) {
+          console.log(`[VideoRecording] Recording started successfully, state: ${recorderRef.current.state}`)
+        }
       } catch (e) {
         console.error(`[VideoRecording] Error in startRecording:`, e)
       }
@@ -166,6 +182,8 @@ export function useVideoRecording(room: string, cid: string, enabled: boolean) {
     void start()
 
     return () => {
+      cancelled = true
+      console.log(`[VideoRecording] Cleanup: stopping recording`)
       stopRecording()
     }
   }, [enabled, room, cid])
