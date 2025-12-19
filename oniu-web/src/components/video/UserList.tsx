@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { rtcSend } from '@/lib/rtc'
+import { formatLastSeen } from '@/lib/formatLastSeen'
 
 type PresenceUser = { cid: string; name: string; lastSeen: number }
 
@@ -78,7 +79,7 @@ export default function UserList({ participants, selfCid, activeRoom, selfName, 
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-neutral-200">{p.name || p.cid}</div>
                     <div className="truncate text-neutral-500">
-                      {p.lastSeen > Date.now() - 45000 ? 'online' : 'idle'}
+                      {formatLastSeen(p.lastSeen)}
                     </div>
                   </div>
                   {p.cid !== selfCid && joined && (

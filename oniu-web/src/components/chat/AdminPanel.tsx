@@ -74,6 +74,11 @@ export default function AdminPanel({
                   <div className="min-w-0">
                     <div className="truncate text-neutral-200">{u.name || u.cid}</div>
                     <div className="truncate text-neutral-500">{u.ip}</div>
+                    {u.lastSeen ? (
+                      <div className="truncate text-[10px] text-neutral-600">
+                        {new Date(u.lastSeen).toLocaleString()}
+                      </div>
+                    ) : null}
                   </div>
                   <div className="flex gap-1">
                     {adminState.muted[u.ip] && adminState.muted[u.ip] > Date.now() ? (

@@ -39,7 +39,7 @@ export function useChatPresence({ room, cid, name, enabled, apiUrl }: UseChatPre
     void updatePresence()
     const interval = setInterval(() => {
       void updatePresence()
-    }, 2000)
+    }, 1000)
 
     return () => clearInterval(interval)
   }, [enabled, room, cid, name, apiUrl])
