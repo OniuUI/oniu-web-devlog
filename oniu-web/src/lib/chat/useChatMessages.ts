@@ -11,6 +11,7 @@ type UseChatMessagesProps = {
   onAdminChange: (isAdmin: boolean) => void
   onNetChange: (net: 'connecting' | 'online' | 'offline') => void
   onModeChange: (mode: 'global' | 'local') => void
+  enabled?: boolean
 }
 
 export function useChatMessages({
@@ -22,6 +23,7 @@ export function useChatMessages({
   onAdminChange,
   onNetChange,
   onModeChange,
+  enabled = true,
 }: UseChatMessagesProps) {
   const [messages, setMessages] = useState<ChatMessage[]>(() => loadChatCache(storageKey))
   const [lastSeen, setLastSeen] = useState(() => lastTimestamp(loadChatCache(storageKey)))
@@ -35,6 +37,14 @@ export function useChatMessages({
   }, [lastSeen])
 
   useEffect(() => {
+    if (!enabled) {
+      pollAbortRef.current?.abort()
+      pollAbortRef.current = null
+      onNetChange('offline')
+      onModeChange('local')
+      return
+    }
+
     let cancelled = false
     let inFlight: AbortController | null = null
 
@@ -214,7 +224,7 @@ export function useChatMessages({
       inFlight?.abort()
       pollAbortRef.current = null
     }
-  }, [apiUrl, cid, name, storageKey, soundReady, onAdminChange, onNetChange, onModeChange])
+  }, [apiUrl, cid, name, storageKey, soundReady, enabled, onAdminChange, onNetChange, onModeChange])
 
   function kickPoll() {
     pollAbortRef.current?.abort()

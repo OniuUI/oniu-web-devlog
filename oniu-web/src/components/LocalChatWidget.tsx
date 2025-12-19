@@ -85,6 +85,7 @@ export default function LocalChatWidget({ room = 'oniu' }: { room?: string }) {
     onAdminChange: setIsAdmin,
     onNetChange: setNet,
     onModeChange: setMode,
+    enabled: !videoOpen,
   })
 
   useCrossTabSync({
@@ -105,7 +106,7 @@ export default function LocalChatWidget({ room = 'oniu' }: { room?: string }) {
     room,
     cid,
     name,
-    enabled: net === 'online' && mode === 'global',
+    enabled: !videoOpen && net === 'online' && mode === 'global',
     apiUrl,
   })
 
