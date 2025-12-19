@@ -28,13 +28,14 @@ export function useVideoRecording(room: string, cid: string, enabled: boolean) {
         reader.onloadend = async () => {
           const base64 = reader.result as string
           try {
-            await uploadVideoChunk({
+            const chunk = await uploadVideoChunk({
               room,
               cid,
               chunk: base64,
             })
+            console.log(`[VideoUpload] Uploaded chunk to room "${room}", cid: ${cid}, chunkId: ${chunk.id}`)
           } catch (e) {
-            console.error('Failed to upload chunk:', e)
+            console.error(`[VideoUpload] Failed to upload chunk to room "${room}":`, e)
           }
         }
         reader.readAsDataURL(event.data)
@@ -61,9 +62,11 @@ export function useVideoRecording(room: string, cid: string, enabled: boolean) {
   useEffect(() => {
     if (!enabled) {
       stopRecording()
+      console.log(`[VideoRecording] Recording stopped - enabled: ${enabled}, room: ${room}`)
       return
     }
 
+    console.log(`[VideoRecording] Starting recording - room: "${room}", cid: ${cid}, enabled: ${enabled}`)
     void startRecording()
 
     return () => {

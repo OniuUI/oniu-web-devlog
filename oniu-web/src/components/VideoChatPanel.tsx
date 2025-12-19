@@ -45,6 +45,10 @@ export default function VideoChatPanel({ room, selfCid, selfName, peers, onClose
     localStream: localStreamRef.current,
   })
 
+  useEffect(() => {
+    console.log(`[VideoChatPanel] State update - activeRoom: "${activeRoom}", joined: ${joined}, initialRoom: "${room}"`)
+  }, [activeRoom, joined, room])
+
   const { localStream } = useVideoRecording(activeRoom, selfCid, joined)
 
   const { roomParticipants, participantCount, syncRoomParticipants } = useRoomPresence({
@@ -60,6 +64,10 @@ export default function VideoChatPanel({ room, selfCid, selfName, peers, onClose
     joined,
     onError: setError,
   })
+
+  useEffect(() => {
+    console.log(`[VideoChatPanel] activeVideoUsers count: ${activeVideoUsers.length}`, activeVideoUsers.map(u => ({ cid: u.cid, chunks: u.chunks.length, status: u.status })))
+  }, [activeVideoUsers])
 
   useRtcInvites({
     room: activeRoom,
@@ -106,7 +114,10 @@ export default function VideoChatPanel({ room, selfCid, selfName, peers, onClose
           <div className="flex flex-wrap gap-2">
             {!joined ? (
               <button
-                onClick={() => void joinGlobal()}
+                onClick={() => {
+                  console.log(`[VideoChatPanel] Join global button clicked`)
+                  void joinGlobal()
+                }}
                 className="rounded-xl bg-white px-3 py-1.5 text-xs font-semibold text-neutral-950 hover:bg-neutral-100"
                 type="button"
               >

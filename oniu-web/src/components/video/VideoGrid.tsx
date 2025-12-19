@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import VideoTile from '@/components/video/VideoTile'
 import CdnVideoTile from '@/components/video/CdnVideoTile'
 import type { VideoChunk } from '@/lib/videoCdn'
@@ -26,6 +27,13 @@ export default function VideoGrid({
   roomParticipants,
   videoRefs,
 }: VideoGridProps) {
+  useEffect(() => {
+    console.log(`[VideoGrid] Rendering - localStream: ${localStream ? 'yes' : 'no'}, activeVideoUsers: ${activeVideoUsers.length}`)
+    activeVideoUsers.forEach((uv) => {
+      console.log(`[VideoGrid] User video - cid: ${uv.cid}, chunks: ${uv.chunks.length}, status: ${uv.status}`)
+    })
+  }, [localStream, activeVideoUsers])
+
   return (
     <div
       className={

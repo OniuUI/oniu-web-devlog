@@ -37,12 +37,14 @@ export function useVideoChunkPolling({ room, selfCid, joined, onError }: UseVide
     let retryCount = 0
 
     const pump = async () => {
+      console.log(`[VideoPoll] Starting polling - room: "${room}", selfCid: ${selfCid}, joined: ${joined}`)
       await new Promise((resolve) => setTimeout(resolve, 1500))
       
       try {
         let consecutive503s = 0
         while (!cancelled) {
           try {
+            console.log(`[VideoPoll] Polling room "${room}" with since=${sinceRef.current}`)
             const res = await pollVideoChunks({
               room,
               since: sinceRef.current,
@@ -58,7 +60,10 @@ export function useVideoChunkPolling({ room, selfCid, joined, onError }: UseVide
               const now = Date.now()
 
               if (res.chunks.length > 0) {
-                console.log(`[VideoPoll] Room: ${room}, Received ${res.chunks.length} chunks, Self: ${selfCid}`)
+                console.log(`[VideoPoll] Room: "${room}", Received ${res.chunks.length} chunks, Self: ${selfCid}`)
+                console.log(`[VideoPoll] Chunk details:`, res.chunks.map(c => ({ cid: c.cid, room: c.room, ts: c.ts })))
+              } else {
+                console.log(`[VideoPoll] Room: "${room}", No chunks received`)
               }
 
               for (const chunk of res.chunks) {

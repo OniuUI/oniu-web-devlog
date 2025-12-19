@@ -42,8 +42,10 @@ export function useRoomManagement({
     setError(null)
     setJoining(true)
     const targetRoom = initialRoom
+    console.log(`[RoomManagement] Joining global room: "${targetRoom}"`)
     setActiveRoom(targetRoom)
     setJoined(true)
+    console.log(`[RoomManagement] Set joined=true, activeRoom="${targetRoom}"`)
     
     await new Promise((resolve) => setTimeout(resolve, 200))
     await syncRef.current(targetRoom)
@@ -57,7 +59,10 @@ export function useRoomManagement({
         type: 'join',
         payload: { name: selfName },
       })
-    } catch {}
+      console.log(`[RoomManagement] Sent RTC join signal for room "${targetRoom}"`)
+    } catch (e) {
+      console.error(`[RoomManagement] Failed to send RTC join:`, e)
+    }
     setJoining(false)
   }
 
