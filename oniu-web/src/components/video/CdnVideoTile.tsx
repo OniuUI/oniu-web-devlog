@@ -10,7 +10,9 @@ type CdnVideoTileProps = {
 export default function CdnVideoTile({ label, chunks, videoRef }: CdnVideoTileProps) {
   const [currentChunkIndex, setCurrentChunkIndex] = useState(0)
   const [buffering, setBuffering] = useState(true)
+  const [failedChunks, setFailedChunks] = useState<Set<string>>(new Set())
   const ref = useRef<HTMLVideoElement | null>(null)
+  const sortedChunksRef = useRef<typeof chunks>([])
 
   useEffect(() => {
     if (ref.current) {
@@ -21,44 +23,94 @@ export default function CdnVideoTile({ label, chunks, videoRef }: CdnVideoTilePr
   useEffect(() => {
     if (chunks.length === 0) {
       setBuffering(true)
+      sortedChunksRef.current = []
       return
     }
 
-    const playChunk = async (index: number) => {
-      if (index >= chunks.length) {
-        setCurrentChunkIndex(0)
-        return
-      }
+    const sorted = [...chunks].sort((a, b) => a.ts - b.ts)
+    sortedChunksRef.current = sorted
 
-      const chunk = chunks[index]
-      if (!ref.current) return
+    if (sorted.length > 0) {
+      console.log(`[CdnVideoTile] ${label}: ${sorted.length} chunks ready`)
+    }
 
-      const video = ref.current
-      video.src = `/cdn/video?src=${encodeURIComponent(chunk.url)}`
+    if (currentChunkIndex >= sorted.length) {
+      setCurrentChunkIndex(0)
+    }
+  }, [chunks, label])
+
+  useEffect(() => {
+    const sorted = sortedChunksRef.current
+    if (sorted.length === 0) {
       setBuffering(true)
+      return
+    }
 
-      video.onloadeddata = () => {
+    let currentIndex = currentChunkIndex
+    if (currentIndex >= sorted.length) {
+      currentIndex = 0
+      setCurrentChunkIndex(0)
+    }
+
+    const chunk = sorted[currentIndex]
+    if (!ref.current || !chunk) return
+
+    if (failedChunks.has(chunk.id)) {
+      const nextIndex = currentIndex + 1
+      if (nextIndex < sorted.length) {
+        setCurrentChunkIndex(nextIndex)
+      } else {
+        setCurrentChunkIndex(0)
+      }
+      return
+    }
+
+    const video = ref.current
+    const url = `/cdn/video?src=${encodeURIComponent(chunk.url)}`
+    
+    if (video.src === url && video.readyState >= 2) {
+      return
+    }
+
+    video.src = url
+    setBuffering(true)
+
+    const handleLoadedData = () => {
+      setBuffering(false)
+      void video.play().catch(() => {
         setBuffering(false)
-        void video.play().catch(() => {})
-      }
+      })
+    }
 
-      video.onended = () => {
-        if (index < chunks.length - 1) {
-          setCurrentChunkIndex(index + 1)
-        } else {
-          setCurrentChunkIndex(0)
-        }
-      }
-
-      video.onerror = () => {
-        if (index < chunks.length - 1) {
-          setCurrentChunkIndex(index + 1)
-        }
+    const handleEnded = () => {
+      const nextIndex = currentIndex + 1
+      if (nextIndex < sorted.length) {
+        setCurrentChunkIndex(nextIndex)
+      } else {
+        setCurrentChunkIndex(0)
       }
     }
 
-    void playChunk(currentChunkIndex)
-  }, [chunks, currentChunkIndex])
+    const handleError = () => {
+      setFailedChunks((prev) => new Set(prev).add(chunk.id))
+      const nextIndex = currentIndex + 1
+      if (nextIndex < sorted.length) {
+        setCurrentChunkIndex(nextIndex)
+      } else {
+        setCurrentChunkIndex(0)
+      }
+    }
+
+    video.addEventListener('loadeddata', handleLoadedData, { once: true })
+    video.addEventListener('ended', handleEnded, { once: true })
+    video.addEventListener('error', handleError, { once: true })
+
+    return () => {
+      video.removeEventListener('loadeddata', handleLoadedData)
+      video.removeEventListener('ended', handleEnded)
+      video.removeEventListener('error', handleError)
+    }
+  }, [currentChunkIndex, failedChunks, chunks])
 
   if (chunks.length === 0) {
     return (

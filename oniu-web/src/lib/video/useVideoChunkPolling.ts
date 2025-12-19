@@ -15,6 +15,9 @@ type UseVideoChunkPollingProps = {
   onError: (error: string) => void
 }
 
+const MAX_CHUNKS_PER_USER = 15
+const CHUNK_MAX_AGE_MS = 15000
+
 export function useVideoChunkPolling({ room, selfCid, joined, onError }: UseVideoChunkPollingProps) {
   const [userVideos, setUserVideos] = useState<Record<string, UserVideoState>>({})
   const sinceRef = useRef(0)
@@ -27,7 +30,7 @@ export function useVideoChunkPolling({ room, selfCid, joined, onError }: UseVide
       return
     }
 
-    sinceRef.current = Math.max(0, Date.now() - 30000)
+    sinceRef.current = Math.max(0, Date.now() - 60000)
     const ac = new AbortController()
     pollAbortRef.current = ac
     let cancelled = false
@@ -40,7 +43,7 @@ export function useVideoChunkPolling({ room, selfCid, joined, onError }: UseVide
             const res = await pollVideoChunks({
               room,
               since: sinceRef.current,
-              timeout: 20,
+              timeout: 10,
               signal: ac.signal,
             })
             sinceRef.current = Math.max(sinceRef.current, res.now)
@@ -48,8 +51,21 @@ export function useVideoChunkPolling({ room, selfCid, joined, onError }: UseVide
 
             setUserVideos((prev) => {
               const next = { ...prev }
+              const now = Date.now()
+
+              if (res.chunks.length > 0) {
+                console.log(`[VideoPoll] Room: ${room}, Received ${res.chunks.length} chunks, Self: ${selfCid}`)
+              }
+
               for (const chunk of res.chunks) {
-                if (chunk.cid === selfCid) continue
+                if (chunk.cid === selfCid) {
+                  continue
+                }
+                if (chunk.room !== room) {
+                  console.warn(`[VideoPoll] Chunk room mismatch: ${chunk.room} !== ${room}`)
+                  continue
+                }
+
                 const existing = next[chunk.cid]
                 if (existing) {
                   const seen = new Set(existing.chunks.map((c) => c.id))
@@ -57,6 +73,15 @@ export function useVideoChunkPolling({ room, selfCid, joined, onError }: UseVide
                     existing.chunks.push(chunk)
                     existing.lastChunkTs = Math.max(existing.lastChunkTs, chunk.ts)
                     existing.status = 'active'
+
+                    existing.chunks.sort((a, b) => a.ts - b.ts)
+
+                    const cutoffTime = now - CHUNK_MAX_AGE_MS
+                    existing.chunks = existing.chunks.filter((c) => c.ts > cutoffTime)
+
+                    if (existing.chunks.length > MAX_CHUNKS_PER_USER) {
+                      existing.chunks = existing.chunks.slice(-MAX_CHUNKS_PER_USER)
+                    }
                   }
                 } else {
                   next[chunk.cid] = {
@@ -68,11 +93,26 @@ export function useVideoChunkPolling({ room, selfCid, joined, onError }: UseVide
                 }
               }
 
-              const now = Date.now()
               for (const cid in next) {
-                if (now - next[cid].lastChunkTs > 10000) {
-                  next[cid].status = 'inactive'
+                const userVideo = next[cid]
+                const cutoffTime = now - CHUNK_MAX_AGE_MS
+                userVideo.chunks = userVideo.chunks.filter((c) => c.ts > cutoffTime)
+
+                if (userVideo.chunks.length === 0) {
+                  delete next[cid]
+                  continue
                 }
+
+                if (now - userVideo.lastChunkTs > 10000) {
+                  userVideo.status = 'inactive'
+                } else {
+                  userVideo.status = 'active'
+                }
+              }
+
+              const activeCount = Object.values(next).filter((v) => v.status === 'active').length
+              if (activeCount > 0) {
+                console.log(`[VideoPoll] Active video users: ${activeCount}`)
               }
 
               return next
