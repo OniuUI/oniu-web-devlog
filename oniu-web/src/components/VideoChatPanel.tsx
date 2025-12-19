@@ -49,6 +49,7 @@ export default function VideoChatPanel({ room, selfCid, selfName, peers, onClose
     console.log(`[VideoChatPanel] State update - activeRoom: "${activeRoom}", joined: ${joined}, initialRoom: "${room}"`)
   }, [activeRoom, joined, room])
 
+  console.log(`[VideoChatPanel] Calling useVideoRecording with activeRoom: "${activeRoom}", selfCid: ${selfCid}, joined: ${joined}`)
   const { localStream } = useVideoRecording(activeRoom, selfCid, joined)
 
   const { roomParticipants, participantCount, syncRoomParticipants } = useRoomPresence({

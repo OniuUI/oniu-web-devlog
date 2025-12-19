@@ -13,7 +13,10 @@ export function useVideoRecording(room: string, cid: string, enabled: boolean) {
   }, [room, cid])
 
   async function ensureMedia() {
-    if (localStream) return localStream
+    if (localStream) {
+      console.log(`[VideoRecording] Using existing stream for room "${roomRef.current}"`)
+      return localStream
+    }
     console.log(`[VideoRecording] Requesting media access for room "${roomRef.current}"`)
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
@@ -100,11 +103,26 @@ export function useVideoRecording(room: string, cid: string, enabled: boolean) {
     }
 
     try {
+      if (recorder.state === 'recording') {
+        console.warn(`[VideoRecording] MediaRecorder already recording for room "${currentRoom}"`)
+        recorderRef.current = recorder
+        return
+      }
       recorder.start(2000)
       recorderRef.current = recorder
       console.log(`[VideoRecording] MediaRecorder.start() called for room "${currentRoom}", state: ${recorder.state}`)
+      
+      setTimeout(() => {
+        if (recorderRef.current) {
+          console.log(`[VideoRecording] MediaRecorder state check after 1s: ${recorderRef.current.state}`)
+          if (recorderRef.current.state !== 'recording') {
+            console.error(`[VideoRecording] MediaRecorder failed to start - state: ${recorderRef.current.state}`)
+          }
+        }
+      }, 1000)
     } catch (e) {
       console.error(`[VideoRecording] Failed to start MediaRecorder for room "${currentRoom}":`, e)
+      throw e
     }
   }
 
@@ -116,6 +134,8 @@ export function useVideoRecording(room: string, cid: string, enabled: boolean) {
   }
 
   useEffect(() => {
+    console.log(`[VideoRecording] useEffect triggered - enabled: ${enabled}, room: "${room}", cid: ${cid}`)
+    
     if (!enabled) {
       stopRecording()
       console.log(`[VideoRecording] Recording stopped - enabled: ${enabled}, room: ${room}`)
@@ -135,7 +155,15 @@ export function useVideoRecording(room: string, cid: string, enabled: boolean) {
     console.log(`[VideoRecording] Starting recording - room: "${room}", cid: ${cid}, enabled: ${enabled}`)
     console.log(`[VideoRecording] MediaRecorder supported types:`, MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus') ? 'vp8,opus' : 'no', MediaRecorder.isTypeSupported('video/webm') ? 'webm' : 'no')
     
-    void startRecording()
+    const start = async () => {
+      try {
+        await startRecording()
+      } catch (e) {
+        console.error(`[VideoRecording] Error in startRecording:`, e)
+      }
+    }
+    
+    void start()
 
     return () => {
       stopRecording()
