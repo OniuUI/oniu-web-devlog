@@ -43,11 +43,26 @@ export function useRoomPresence({ room, selfCid, joined, peers }: UseRoomPresenc
 
   useEffect(() => {
     if (!joined) return
-    void syncRoomParticipants(room)
+    
+    let mounted = true
+    
+    const sync = async () => {
+      if (!mounted) return
+      await syncRoomParticipants(room)
+    }
+    
+    setTimeout(() => {
+      if (mounted) void sync()
+    }, 500)
+    
     const interval = setInterval(() => {
-      void syncRoomParticipants(room)
-    }, 1000)
-    return () => clearInterval(interval)
+      if (mounted) void sync()
+    }, 2000)
+    
+    return () => {
+      mounted = false
+      clearInterval(interval)
+    }
   }, [joined, room, selfCid, peers])
 
   const activeParticipants = roomParticipants.filter((p) => p.cid !== selfCid && p.lastSeen > Date.now() - 45000)

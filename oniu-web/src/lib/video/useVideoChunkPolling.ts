@@ -37,17 +37,21 @@ export function useVideoChunkPolling({ room, selfCid, joined, onError }: UseVide
     let retryCount = 0
 
     const pump = async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1500))
+      
       try {
+        let consecutive503s = 0
         while (!cancelled) {
           try {
             const res = await pollVideoChunks({
               room,
               since: sinceRef.current,
-              timeout: 10,
+              timeout: consecutive503s >= 3 ? 5 : 10,
               signal: ac.signal,
             })
             sinceRef.current = Math.max(sinceRef.current, res.now)
             retryCount = 0
+            consecutive503s = 0
 
             setUserVideos((prev) => {
               const next = { ...prev }
@@ -120,13 +124,23 @@ export function useVideoChunkPolling({ room, selfCid, joined, onError }: UseVide
           } catch (pollError: unknown) {
             if ((pollError as { name?: string })?.name === 'AbortError') return
             const errorMsg = pollError instanceof Error ? pollError.message : 'Video poll failed'
-            if (errorMsg.includes('503') || errorMsg.includes('Service Unavailable')) {
+            const is503 = errorMsg.includes('503') || errorMsg.includes('Service Unavailable')
+            
+            if (is503) {
+              consecutive503s++
               retryCount++
-              if (retryCount <= 5) {
-                await new Promise((resolve) => setTimeout(resolve, 2000 * retryCount))
-                continue
+              
+              if (consecutive503s >= 3) {
+                const backoff = Math.min(30000, 3000 * Math.pow(2, Math.min(consecutive503s - 3, 4)))
+                console.warn(`[VideoPoll] Server overloaded (503), backing off for ${backoff}ms`)
+                await new Promise((resolve) => setTimeout(resolve, backoff))
+              } else {
+                await new Promise((resolve) => setTimeout(resolve, 2000 * consecutive503s))
               }
+              continue
             }
+            
+            consecutive503s = 0
             retryCount++
             if (retryCount > 3) {
               onError(errorMsg)

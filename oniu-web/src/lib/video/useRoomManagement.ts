@@ -44,7 +44,11 @@ export function useRoomManagement({
     const targetRoom = initialRoom
     setActiveRoom(targetRoom)
     setJoined(true)
+    
+    await new Promise((resolve) => setTimeout(resolve, 200))
     await syncRef.current(targetRoom)
+    
+    await new Promise((resolve) => setTimeout(resolve, 300))
     try {
       await rtcSend({
         room: targetRoom,
@@ -62,7 +66,11 @@ export function useRoomManagement({
     setJoining(true)
     setActiveRoom(targetRoom)
     setJoined(true)
+    
+    await new Promise((resolve) => setTimeout(resolve, 200))
     await syncRef.current(targetRoom)
+    
+    await new Promise((resolve) => setTimeout(resolve, 300))
     try {
       await rtcSend({
         room: targetRoom,
