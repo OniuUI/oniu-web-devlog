@@ -125,16 +125,32 @@ export function useChatMessages({
 
       let retryCount = 0
       let consecutive503s = 0
+      let circuitBreakerOpen = false
+
+      await new Promise((r) => setTimeout(r, 200))
 
       try {
         await pollOnce(0)
         retryCount = 0
         consecutive503s = 0
+        circuitBreakerOpen = false
       } catch (e: unknown) {
         if ((e as { name?: string })?.name === 'AbortError') return
         const status = (e as { status?: number })?.status
         if (status === 503) {
           consecutive503s++
+          if (consecutive503s >= 3) {
+            circuitBreakerOpen = true
+            const backoff = Math.min(30000, 5000 * Math.pow(2, Math.min(consecutive503s - 3, 3)))
+            console.warn(`[Chat] Initial request failed (503), circuit breaker open, waiting ${backoff}ms`)
+            await new Promise((r) => setTimeout(r, backoff))
+            circuitBreakerOpen = false
+            consecutive503s = 0
+          } else {
+            await new Promise((r) => setTimeout(r, 2000 * consecutive503s))
+          }
+        } else {
+          await new Promise((r) => setTimeout(r, 1000))
         }
         onNetChange('offline')
         onModeChange('local')
@@ -142,10 +158,19 @@ export function useChatMessages({
       }
 
       while (!cancelled) {
+        if (circuitBreakerOpen) {
+          const backoff = Math.min(60000, 5000 * Math.pow(2, Math.min(consecutive503s - 5, 4)))
+          console.warn(`[Chat] Circuit breaker open (server down), waiting ${backoff}ms before retry`)
+          await new Promise((r) => setTimeout(r, backoff))
+          circuitBreakerOpen = false
+          consecutive503s = 0
+        }
+        
         try {
           await pollOnce(20)
           retryCount = 0
           consecutive503s = 0
+          circuitBreakerOpen = false
         } catch (e: unknown) {
           if ((e as { name?: string })?.name === 'AbortError') continue
           
@@ -156,8 +181,13 @@ export function useChatMessages({
             consecutive503s++
             retryCount++
             
-            if (consecutive503s >= 3) {
-              const backoff = Math.min(30000, 2000 * Math.pow(2, Math.min(retryCount - 3, 5)))
+            if (consecutive503s >= 5) {
+              circuitBreakerOpen = true
+              const backoff = Math.min(60000, 5000 * Math.pow(2, Math.min(consecutive503s - 5, 4)))
+              console.warn(`[Chat] Server overloaded (503), circuit breaker open, backing off for ${backoff}ms`)
+              await new Promise((r) => setTimeout(r, backoff))
+            } else if (consecutive503s >= 3) {
+              const backoff = Math.min(30000, 2000 * Math.pow(2, Math.min(consecutive503s - 3, 5)))
               console.warn(`[Chat] Server overloaded (503), backing off for ${backoff}ms`)
               await new Promise((r) => setTimeout(r, backoff))
             } else {
