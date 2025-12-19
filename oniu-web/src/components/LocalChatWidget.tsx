@@ -2,10 +2,13 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { applyMod, lastTimestamp, loadChatCache, mergeMessages, saveChatCache, type ChatMessage, type ChatMod } from '@/lib/chatSync'
 import { generateChatName } from '@/lib/nameGenerator'
 import VideoChatPanel from '@/components/VideoChatPanel'
-import { enableSound, playMessageSound } from '@/lib/sound'
+import { enableSound } from '@/lib/sound'
 import { useChatPresence } from '@/lib/chat/useChatPresence'
 import { useOfflineQueue } from '@/lib/chat/useOfflineQueue'
 import { useAdminActions } from '@/lib/chat/useAdminActions'
+import { useChatMessages } from '@/lib/chat/useChatMessages'
+import { useMessageManagement } from '@/lib/chat/useMessageManagement'
+import { useCrossTabSync } from '@/lib/chat/useCrossTabSync'
 import AdminPanel from '@/components/chat/AdminPanel'
 
 function cx(...v: Array<string | false | null | undefined>) {
@@ -42,7 +45,6 @@ export default function LocalChatWidget({ room = 'oniu' }: { room?: string }) {
   const [open, setOpen] = useState(false)
   const [name, setName] = useState(() => localStorage.getItem('oniu.chat.name') ?? generateChatName())
   const [text, setText] = useState('')
-  const [messages, setMessages] = useState<ChatMessage[]>(() => loadChatCache(storageKey))
   const [mode, setMode] = useState<'global' | 'local'>('global')
   const [net, setNet] = useState<'connecting' | 'online' | 'offline'>('connecting')
   const [isAdmin, setIsAdmin] = useState(false)
@@ -57,20 +59,9 @@ export default function LocalChatWidget({ room = 'oniu' }: { room?: string }) {
     localStorage.setItem('oniu.chat.cid', id)
     return id
   }, [])
-  const [lastSeen, setLastSeen] = useState(() => {
-    return lastTimestamp(loadChatCache(storageKey))
-  })
-  const lastSeenRef = useRef(lastSeen)
-  useEffect(() => {
-    lastSeenRef.current = lastSeen
-  }, [lastSeen])
-  const pollAbortRef = useRef<AbortController | null>(null)
 
-  const [userBusy, setUserBusy] = useState(false)
   const [lastReadTs, setLastReadTs] = useState(() => lastTimestamp(loadChatCache(storageKey)))
   const [soundReady, setSoundReady] = useState(false)
-  const lastNotifiedIdRef = useRef<string>('')
-  const lastModRef = useRef<string>('')
 
   const listRef = useRef<HTMLDivElement | null>(null)
 
@@ -78,9 +69,33 @@ export default function LocalChatWidget({ room = 'oniu' }: { room?: string }) {
     localStorage.setItem('oniu.chat.name', name)
   }, [name])
 
+  const {
+    messages,
+    setLastSeen,
+    lastSeenRef,
+    kickPoll,
+    updateMessages,
+  } = useChatMessages({
+    storageKey,
+    apiUrl,
+    cid,
+    name,
+    soundReady,
+    onAdminChange: setIsAdmin,
+    onNetChange: setNet,
+    onModeChange: setMode,
+  })
+
+  useCrossTabSync({
+    storageKey,
+    channelName,
+    onMessagesChange: updateMessages,
+  })
+
   useEffect(() => {
     if (!open) return
-    setLastReadTs(lastTimestamp(loadChatCache(storageKey)))
+    const cached = loadChatCache(storageKey)
+    setLastReadTs(lastTimestamp(cached))
   }, [open, storageKey])
 
   const unreadCount = useMemo(() => {
@@ -93,147 +108,6 @@ export default function LocalChatWidget({ room = 'oniu' }: { room?: string }) {
     }
     return c
   }, [messages, lastReadTs])
-
-  useEffect(() => {
-    const bc = 'BroadcastChannel' in window ? new BroadcastChannel(channelName) : null
-
-    const onStorage = (e: StorageEvent) => {
-      if (e.key !== storageKey) return
-      setMessages(loadChatCache(storageKey))
-    }
-
-    const onBroadcast = (e: MessageEvent) => {
-      if (!e?.data) return
-      if (e.data?.type === 'sync') {
-        setMessages(loadChatCache(storageKey))
-      }
-    }
-
-    window.addEventListener('storage', onStorage)
-    bc?.addEventListener('message', onBroadcast)
-
-    return () => {
-      window.removeEventListener('storage', onStorage)
-      bc?.removeEventListener('message', onBroadcast)
-      bc?.close()
-    }
-  }, [channelName, storageKey])
-
-  useEffect(() => {
-    let cancelled = false
-    let inFlight: AbortController | null = null
-
-    const applyServer = (incoming: ChatMessage[], mod: ChatMod | undefined, serverNow: number | undefined) => {
-      const modKey = mod ? JSON.stringify(mod) : ''
-      const modChanged = modKey !== lastModRef.current
-      lastModRef.current = modKey
-
-      if (modChanged && mod) {
-        const deletedIds = Array.isArray(mod.deleted_ids) ? mod.deleted_ids : []
-        const clearedBefore = typeof mod.cleared_before_ts === 'number' ? mod.cleared_before_ts : 0
-        
-        if (clearedBefore > 0) {
-          saveChatCache(storageKey, [])
-          setMessages([])
-          setLastSeen(clearedBefore)
-          lastSeenRef.current = clearedBefore
-          return
-        }
-        
-        if (deletedIds.length > 0) {
-          const local = loadChatCache(storageKey)
-          const filtered = applyMod(local, mod)
-          saveChatCache(storageKey, filtered)
-          setMessages(filtered)
-          const ts = lastTimestamp(filtered)
-          if (ts) {
-            setLastSeen(ts)
-            lastSeenRef.current = ts
-          } else if (typeof serverNow === 'number' && serverNow > 0) {
-            setLastSeen(serverNow)
-            lastSeenRef.current = serverNow
-          }
-          return
-        }
-      }
-
-      const local = loadChatCache(storageKey)
-      const merged = mergeMessages(local, incoming)
-      const afterMod = applyMod(merged, mod)
-      saveChatCache(storageKey, afterMod)
-      setMessages(afterMod)
-      const last = afterMod.length ? afterMod[afterMod.length - 1] : null
-      if (last && !last.mine && last.id && last.id !== lastNotifiedIdRef.current) {
-        lastNotifiedIdRef.current = last.id
-        if (soundReady) playMessageSound()
-      }
-      const ts = lastTimestamp(afterMod)
-      if (ts) {
-        setLastSeen(ts)
-        lastSeenRef.current = ts
-      } else if (typeof serverNow === 'number' && serverNow > 0) {
-        setLastSeen(serverNow)
-        lastSeenRef.current = serverNow
-      }
-    }
-
-    const pollOnce = async (timeout: number) => {
-      inFlight = new AbortController()
-      pollAbortRef.current = inFlight
-      const url =
-        `${apiUrl}&since=${encodeURIComponent(String(lastSeenRef.current))}` +
-        `&timeout=${encodeURIComponent(String(timeout))}` +
-        `&cid=${encodeURIComponent(cid)}` +
-        `&name=${encodeURIComponent(name)}` +
-        `&presence=1`
-      const res = await fetch(url, { cache: 'no-store', signal: inFlight.signal })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const data = (await res.json()) as {
-        messages?: ChatMessage[]
-        now?: number
-        admin?: boolean
-        mod?: ChatMod
-        presence?: Array<{ cid: string; name: string; lastSeen: number }> | null
-      }
-      setIsAdmin(Boolean(data.admin))
-      applyServer(Array.isArray(data.messages) ? data.messages : [], data.mod, data.now)
-      setNet('online')
-      setMode('global')
-    }
-
-    const loop = async () => {
-      setMode('global')
-      setNet('connecting')
-
-      try {
-        await pollOnce(0)
-      } catch {
-        setNet('offline')
-        setMode('local')
-        setIsAdmin(false)
-      }
-
-      while (!cancelled) {
-        try {
-          await pollOnce(20)
-        } catch (e: unknown) {
-          if ((e as { name?: string })?.name === 'AbortError') continue
-          setNet('offline')
-          setMode('local')
-          setIsAdmin(false)
-          await new Promise((r) => setTimeout(r, 1500))
-        }
-      }
-    }
-
-    void loop()
-
-    return () => {
-      cancelled = true
-      inFlight?.abort()
-      pollAbortRef.current = null
-    }
-  }, [apiUrl, cid, name, storageKey])
 
   const { presencePublic, onlineCount } = useChatPresence({
     room,
@@ -264,23 +138,18 @@ export default function LocalChatWidget({ room = 'oniu' }: { room?: string }) {
       .catch(() => {})
   }, [adminOpen, isAdmin, csrf])
 
-  function kickPoll() {
-    pollAbortRef.current?.abort()
-  }
-
   function handleModUpdate(mod: ChatMod) {
     const clearedBefore = typeof mod.cleared_before_ts === 'number' ? mod.cleared_before_ts : 0
     if (clearedBefore > 0) {
-      setMessages([])
+      updateMessages([])
       setLastSeen(clearedBefore)
       lastSeenRef.current = clearedBefore
     } else {
       const local = loadChatCache(storageKey)
       const filtered = applyMod(local, mod)
       saveChatCache(storageKey, filtered)
-      setMessages(filtered)
+      updateMessages(filtered)
     }
-    lastModRef.current = JSON.stringify(mod)
   }
 
   const { adminAction, adminBusy } = useAdminActions({
@@ -292,41 +161,13 @@ export default function LocalChatWidget({ room = 'oniu' }: { room?: string }) {
     onPollKick: kickPoll,
   })
 
-  async function deleteOwn(id: string) {
-    if (!id) return
-    if (userBusy) return
-    setUserBusy(true)
-    try {
-      const local = loadChatCache(storageKey)
-      const next = local.filter((m) => m.id !== id)
-      saveChatCache(storageKey, next)
-      setMessages(next)
-      const res = await fetch('/api/chat.php', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        cache: 'no-store',
-        body: JSON.stringify({ room, action: 'delete_own', id, cid }),
-      })
-      if (!res.ok) {
-        setMessages(local)
-        saveChatCache(storageKey, local)
-      } else {
-        const data = (await res.json()) as { mod?: ChatMod }
-        if (data.mod) {
-          const filtered = applyMod(next, data.mod)
-          saveChatCache(storageKey, filtered)
-          setMessages(filtered)
-          lastModRef.current = JSON.stringify(data.mod)
-        }
-        kickPoll()
-      }
-    } catch {
-      const local = loadChatCache(storageKey)
-      setMessages(local)
-    } finally {
-      setUserBusy(false)
-    }
-  }
+  const { deleteOwn, clearChat, userBusy } = useMessageManagement({
+    room,
+    storageKey,
+    cid,
+    onMessagesChange: updateMessages,
+    onPollKick: kickPoll,
+  })
 
   useEffect(() => {
     if (!open) return
@@ -367,7 +208,7 @@ export default function LocalChatWidget({ room = 'oniu' }: { room?: string }) {
 
     const next = mergeMessages(loadChatCache(storageKey), [msg])
     saveChatCache(storageKey, next)
-    setMessages(next)
+    updateMessages(next)
     setText('')
 
     if ('BroadcastChannel' in window) {
@@ -410,8 +251,7 @@ export default function LocalChatWidget({ room = 'oniu' }: { room?: string }) {
   }
 
   function clear() {
-    setMessages([])
-    saveChatCache(storageKey, [])
+    clearChat()
     setLastReadTs(Date.now())
     if ('BroadcastChannel' in window) {
       const bc = new BroadcastChannel(channelName)
