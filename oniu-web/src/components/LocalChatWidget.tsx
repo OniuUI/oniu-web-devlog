@@ -9,11 +9,12 @@ import { useAdminActions } from '@/lib/chat/useAdminActions'
 import { useChatMessages } from '@/lib/chat/useChatMessages'
 import { useMessageManagement } from '@/lib/chat/useMessageManagement'
 import { useCrossTabSync } from '@/lib/chat/useCrossTabSync'
+import { useUnreadCount } from '@/lib/chat/useUnreadCount'
 import AdminPanel from '@/components/chat/AdminPanel'
-
-function cx(...v: Array<string | false | null | undefined>) {
-  return v.filter(Boolean).join(' ')
-}
+import ChatHeader from '@/components/chat/ChatHeader'
+import MessageList from '@/components/chat/MessageList'
+import ChatInput from '@/components/chat/ChatInput'
+import NameInput from '@/components/chat/NameInput'
 
 function createMessageId(): string {
   try {
@@ -98,16 +99,7 @@ export default function LocalChatWidget({ room = 'oniu' }: { room?: string }) {
     setLastReadTs(lastTimestamp(cached))
   }, [open, storageKey])
 
-  const unreadCount = useMemo(() => {
-    const cutoff = lastReadTs
-    let c = 0
-    for (const m of messages) {
-      if (m.ts <= cutoff) continue
-      if (m.mine) continue
-      c++
-    }
-    return c
-  }, [messages, lastReadTs])
+  const unreadCount = useUnreadCount({ messages, lastReadTs })
 
   const { presencePublic, onlineCount } = useChatPresence({
     room,
@@ -264,60 +256,19 @@ export default function LocalChatWidget({ room = 'oniu' }: { room?: string }) {
     <div className="fixed bottom-4 right-4 z-50 sm:bottom-5 sm:right-5">
       {open ? (
         <div className="flex h-[min(78svh,640px)] w-[min(94vw,360px)] flex-col overflow-hidden rounded-2xl bg-neutral-950/70 ring-1 ring-white/10 backdrop-blur">
-          <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <div className="truncate text-sm font-semibold">Chat</div>
-                {onlineCount > 0 ? (
-                  <div className="flex items-center gap-1.5">
-                    <div className="h-2 w-2 rounded-full bg-green-500"></div>
-                    <span className="text-xs font-semibold text-green-400">{onlineCount}</span>
-                  </div>
-                ) : null}
-              </div>
-              <div className="text-xs text-neutral-400">
-                {mode === 'global' ? 'Global chat' : 'Local fallback'} •{' '}
-                <span className={net === 'online' ? 'text-emerald-300' : net === 'offline' ? 'text-rose-300' : ''}>
-                  {net}
-                </span>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              {isAdmin ? (
-                <button
-                  onClick={() => setAdminOpen((v) => !v)}
-                  className="rounded-xl px-3 py-1.5 text-xs text-neutral-200 ring-1 ring-white/10 hover:bg-white/5"
-                  title="Admin tools"
-                >
-                  Admin
-                </button>
-              ) : null}
-              <button
-                onClick={() => setVideoOpen((v) => !v)}
-                className="rounded-xl px-3 py-1.5 text-xs text-neutral-200 ring-1 ring-white/10 hover:bg-white/5"
-                title="Video"
-              >
-                Video
-              </button>
-              <button
-                onClick={clear}
-                className="rounded-xl px-3 py-1.5 text-xs text-neutral-200 ring-1 ring-white/10 hover:bg-white/5"
-                title="Clear chat"
-              >
-                Clear
-              </button>
-              <button
-                onClick={() => {
-                  void enableSound().then((ok) => ok && setSoundReady(true))
-                  setOpen(false)
-                }}
-                className="rounded-xl px-3 py-1.5 text-xs text-neutral-200 ring-1 ring-white/10 hover:bg-white/5"
-                title="Close"
-              >
-                ✕
-              </button>
-            </div>
-          </div>
+          <ChatHeader
+            mode={mode}
+            net={net}
+            onlineCount={onlineCount}
+            isAdmin={isAdmin}
+            onAdminToggle={() => setAdminOpen((v) => !v)}
+            onVideoToggle={() => setVideoOpen((v) => !v)}
+            onClear={clear}
+            onClose={() => {
+              void enableSound().then((ok) => ok && setSoundReady(true))
+              setOpen(false)
+            }}
+          />
 
           {adminOpen ? (
             <AdminPanel
@@ -342,116 +293,21 @@ export default function LocalChatWidget({ room = 'oniu' }: { room?: string }) {
             </div>
           ) : null}
 
-          <div className="px-4 py-3">
-            <div className="grid gap-2">
-              <span className="text-xs text-neutral-400">Name</span>
-              <div className="flex items-center gap-2">
-                <input
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  className="flex-1 rounded-xl bg-neutral-950/60 px-3 py-2 text-sm text-neutral-100 ring-1 ring-white/10 placeholder:text-neutral-500 focus:outline-none focus:ring-white/20"
-                />
-                <button
-                  onClick={() => setName(generateChatName())}
-                  className="rounded-xl px-3 py-2 text-xs text-neutral-200 ring-1 ring-white/10 hover:bg-white/5"
-                  type="button"
-                  title="Random name"
-                >
-                  Random
-                </button>
-              </div>
-            </div>
-          </div>
+          <NameInput name={name} onNameChange={setName} />
 
           <div ref={listRef} className="min-h-0 flex-1 space-y-3 overflow-auto px-4 pb-3">
-            {messages.length === 0 ? (
-              <div className="rounded-xl bg-white/5 px-3 py-2 text-xs text-neutral-400 ring-1 ring-white/10">
-                No messages yet.
-              </div>
-            ) : (
-              messages.map((m) => (
-                <div key={m.id} className="rounded-xl bg-white/5 px-3 py-2 ring-1 ring-white/10">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="truncate text-xs font-semibold text-neutral-200">{m.name}</div>
-                    <div className="flex items-center gap-2">
-                      {isAdmin && m.ip ? <div className="text-[10px] text-neutral-500">{m.ip}</div> : null}
-                      <div className="text-[10px] text-neutral-500">{new Date(m.ts).toLocaleTimeString()}</div>
-                      {isAdmin && m.ip ? (
-                        <button
-                          onClick={() => void adminAction({ action: 'delete_message', id: m.id })}
-                          className="rounded-md px-2 py-0.5 text-[10px] text-neutral-200 ring-1 ring-white/10 hover:bg-white/5"
-                          title="Delete message"
-                          disabled={!csrf || adminBusy}
-                        >
-                          Del
-                        </button>
-                      ) : null}
-                      {!isAdmin && m.mine ? (
-                        <button
-                          onClick={() => void deleteOwn(m.id)}
-                          className="rounded-md px-2 py-0.5 text-[10px] text-neutral-200 ring-1 ring-white/10 hover:bg-white/5"
-                          title="Delete message"
-                          disabled={userBusy}
-                        >
-                          Del
-                        </button>
-                      ) : null}
-                      {isAdmin && m.ip ? (
-                        <button
-                          onClick={() => void adminAction({ action: 'mute', ip: m.ip, minutes: 10 })}
-                          className="rounded-md px-2 py-0.5 text-[10px] text-neutral-200 ring-1 ring-white/10 hover:bg-white/5"
-                          title="Mute IP for 10 minutes"
-                          disabled={!csrf || adminBusy}
-                        >
-                          Mute
-                        </button>
-                      ) : null}
-                      {isAdmin && m.ip ? (
-                        <button
-                          onClick={() => void adminAction({ action: 'ban', ip: m.ip })}
-                          className="rounded-md px-2 py-0.5 text-[10px] text-rose-200 ring-1 ring-rose-500/30 hover:bg-rose-500/10"
-                          title="Ban IP"
-                          disabled={!csrf || adminBusy}
-                        >
-                          Ban
-                        </button>
-                      ) : null}
-                    </div>
-                  </div>
-                  <div className="mt-1 whitespace-pre-wrap text-sm text-neutral-200">{m.text}</div>
-                </div>
-              ))
-            )}
+            <MessageList
+              messages={messages}
+              isAdmin={isAdmin}
+              csrf={csrf}
+              adminBusy={adminBusy}
+              userBusy={userBusy}
+              onAdminAction={adminAction}
+              onDeleteOwn={deleteOwn}
+            />
           </div>
 
-          <div className="border-t border-white/10 px-4 py-3">
-            <div className="flex items-end gap-2">
-              <textarea
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                rows={2}
-                placeholder="Write a message…"
-                className="min-h-[48px] flex-1 resize-none rounded-xl bg-neutral-950/60 px-3 py-2 text-sm text-neutral-100 ring-1 ring-white/10 placeholder:text-neutral-500 focus:outline-none focus:ring-white/20"
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-                    e.preventDefault()
-                    post()
-                  }
-                }}
-              />
-              <button
-                onClick={post}
-                className={cx(
-                  'rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-neutral-950',
-                  'hover:bg-neutral-100',
-                )}
-              >
-                Send
-              </button>
-            </div>
-            {sendError ? <div className="mt-2 text-[11px] text-rose-300">{sendError}</div> : null}
-            <div className="mt-2 text-[11px] text-neutral-500">Tip: Ctrl/⌘ + Enter to send.</div>
-          </div>
+          <ChatInput text={text} onTextChange={setText} onPost={post} sendError={sendError} />
         </div>
       ) : (
         <button
