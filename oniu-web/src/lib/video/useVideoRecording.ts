@@ -7,6 +7,8 @@ export function useVideoRecording(room: string, cid: string, enabled: boolean) {
   const recorderRef = useRef<MediaRecorder | null>(null)
   const roomRef = useRef(room)
   const cidRef = useRef(cid)
+  const isStartingRef = useRef(false)
+  const shouldStopRef = useRef(false)
 
   useEffect(() => {
     roomRef.current = room
@@ -139,6 +141,7 @@ export function useVideoRecording(room: string, cid: string, enabled: boolean) {
         }
       }
       recorderRef.current = null
+      isStartingRef.current = false
     }
   }
 
@@ -147,6 +150,7 @@ export function useVideoRecording(room: string, cid: string, enabled: boolean) {
     
     if (!enabled) {
       console.log(`[VideoRecording] Recording disabled - stopping any active recording`)
+      shouldStopRef.current = true
       stopRecording()
       console.log(`[VideoRecording] Recording stopped - enabled: ${enabled}, room: ${room}`)
       return
@@ -162,19 +166,31 @@ export function useVideoRecording(room: string, cid: string, enabled: boolean) {
       return
     }
 
+    if (recorderRef.current && recorderRef.current.state === 'recording') {
+      console.log(`[VideoRecording] Recorder already active, skipping start`)
+      return
+    }
+
+    if (isStartingRef.current) {
+      console.log(`[VideoRecording] Already starting, skipping duplicate start`)
+      return
+    }
+
     console.log(`[VideoRecording] Starting recording - room: "${room}", cid: ${cid}, enabled: ${enabled}`)
     console.log(`[VideoRecording] MediaRecorder supported types:`, MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus') ? 'vp8,opus' : 'no', MediaRecorder.isTypeSupported('video/webm') ? 'webm' : 'no')
     
-    let cancelled = false
+    shouldStopRef.current = false
+    isStartingRef.current = true
     
     const start = async () => {
-      if (cancelled) return
       try {
         await startRecording()
-        if (!cancelled && recorderRef.current) {
+        isStartingRef.current = false
+        if (!shouldStopRef.current && recorderRef.current) {
           console.log(`[VideoRecording] Recording started successfully, state: ${recorderRef.current.state}`)
         }
       } catch (e) {
+        isStartingRef.current = false
         console.error(`[VideoRecording] Error in startRecording:`, e)
       }
     }
@@ -182,9 +198,12 @@ export function useVideoRecording(room: string, cid: string, enabled: boolean) {
     void start()
 
     return () => {
-      cancelled = true
-      console.log(`[VideoRecording] Cleanup: stopping recording`)
-      stopRecording()
+      if (shouldStopRef.current) {
+        console.log(`[VideoRecording] Cleanup: stopping recording (enabled changed to false)`)
+        stopRecording()
+      } else {
+        console.log(`[VideoRecording] Cleanup: skipping stop (just a re-render, not a dependency change)`)
+      }
     }
   }, [enabled, room, cid])
 
