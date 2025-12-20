@@ -166,9 +166,15 @@ export function useVideoRecording(room: string, cid: string, enabled: boolean) {
       return
     }
 
-    if (recorderRef.current && recorderRef.current.state === 'recording') {
-      console.log(`[VideoRecording] Recorder already active, skipping start`)
-      return
+    if (recorderRef.current) {
+      const state = recorderRef.current.state
+      if (state === 'recording') {
+        console.log(`[VideoRecording] Recorder already active (state: ${state}), skipping start`)
+        return
+      } else {
+        console.log(`[VideoRecording] Recorder exists but not recording (state: ${state}), will restart`)
+        recorderRef.current = null
+      }
     }
 
     if (isStartingRef.current) {
@@ -215,6 +221,31 @@ export function useVideoRecording(room: string, cid: string, enabled: boolean) {
       }
     }
   }, [localStream])
+
+  useEffect(() => {
+    if (!enabled) return
+    
+    const checkInterval = setInterval(() => {
+      if (enabled && (!recorderRef.current || recorderRef.current.state !== 'recording')) {
+        console.log(`[VideoRecording] Monitor: Recorder should be running but isn't, restarting...`)
+        if (recorderRef.current && recorderRef.current.state !== 'recording') {
+          recorderRef.current = null
+        }
+        if (!isStartingRef.current) {
+          isStartingRef.current = true
+          shouldStopRef.current = false
+          void startRecording().then(() => {
+            isStartingRef.current = false
+          }).catch((e) => {
+            isStartingRef.current = false
+            console.error(`[VideoRecording] Monitor restart failed:`, e)
+          })
+        }
+      }
+    }, 3000)
+
+    return () => clearInterval(checkInterval)
+  }, [enabled, room, cid])
 
   return { localStream }
 }
