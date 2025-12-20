@@ -145,14 +145,29 @@ export function useVideoRecording(room: string, cid: string, enabled: boolean) {
     }
   }
 
+  const prevEnabledRef = useRef(enabled)
+  const prevRoomRef = useRef(room)
+  const prevCidRef = useRef(cid)
+
   useEffect(() => {
-    console.log(`[VideoRecording] useEffect triggered - enabled: ${enabled}, room: "${room}", cid: ${cid}`)
+    const enabledChanged = prevEnabledRef.current !== enabled
+    const roomChanged = prevRoomRef.current !== room
+    const cidChanged = prevCidRef.current !== cid
+    
+    const shouldStopInCleanup = enabledChanged || roomChanged || cidChanged
+    
+    prevEnabledRef.current = enabled
+    prevRoomRef.current = room
+    prevCidRef.current = cid
+
+    console.log(`[VideoRecording] useEffect triggered - enabled: ${enabled}, room: "${room}", cid: ${cid}, changed: enabled=${enabledChanged} room=${roomChanged} cid=${cidChanged}`)
     
     if (!enabled) {
-      console.log(`[VideoRecording] Recording disabled - stopping any active recording`)
-      shouldStopRef.current = true
-      stopRecording()
-      console.log(`[VideoRecording] Recording stopped - enabled: ${enabled}, room: ${room}`)
+      if (enabledChanged) {
+        console.log(`[VideoRecording] Recording disabled - stopping any active recording`)
+        stopRecording()
+        console.log(`[VideoRecording] Recording stopped - enabled: ${enabled}, room: ${room}`)
+      }
       return
     }
 
@@ -168,16 +183,16 @@ export function useVideoRecording(room: string, cid: string, enabled: boolean) {
 
     if (recorderRef.current) {
       const state = recorderRef.current.state
-      if (state === 'recording') {
+      if (state === 'recording' && !enabledChanged && !roomChanged && !cidChanged) {
         console.log(`[VideoRecording] Recorder already active (state: ${state}), skipping start`)
         return
-      } else {
+      } else if (state !== 'recording') {
         console.log(`[VideoRecording] Recorder exists but not recording (state: ${state}), will restart`)
         recorderRef.current = null
       }
     }
 
-    if (isStartingRef.current) {
+    if (isStartingRef.current && !enabledChanged && !roomChanged && !cidChanged) {
       console.log(`[VideoRecording] Already starting, skipping duplicate start`)
       return
     }
@@ -204,11 +219,12 @@ export function useVideoRecording(room: string, cid: string, enabled: boolean) {
     void start()
 
     return () => {
-      if (shouldStopRef.current) {
-        console.log(`[VideoRecording] Cleanup: stopping recording (enabled changed to false)`)
+      if (shouldStopInCleanup && (!enabled || roomChanged || cidChanged)) {
+        console.log(`[VideoRecording] Cleanup: stopping recording (dependencies changed)`)
+        shouldStopRef.current = true
         stopRecording()
       } else {
-        console.log(`[VideoRecording] Cleanup: skipping stop (just a re-render, not a dependency change)`)
+        console.log(`[VideoRecording] Cleanup: skipping stop (dependencies unchanged: enabled=${enabled}, shouldStop=${shouldStopInCleanup})`)
       }
     }
   }, [enabled, room, cid])
