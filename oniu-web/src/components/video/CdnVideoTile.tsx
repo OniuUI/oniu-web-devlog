@@ -48,8 +48,10 @@ export default function CdnVideoTile({ label, chunks, videoRef }: CdnVideoTilePr
 
     let currentIndex = currentChunkIndex
     if (currentIndex >= sorted.length) {
-      currentIndex = 0
-      setCurrentChunkIndex(0)
+      const now = Date.now()
+      const recentIndex = sorted.findIndex((c) => c.ts > now - 5000)
+      currentIndex = recentIndex >= 0 ? recentIndex : Math.max(0, sorted.length - 1)
+      setCurrentChunkIndex(currentIndex)
     }
 
     const chunk = sorted[currentIndex]
@@ -72,6 +74,11 @@ export default function CdnVideoTile({ label, chunks, videoRef }: CdnVideoTilePr
       return
     }
 
+    const nextChunk = sorted[currentIndex + 1]
+    if (nextChunk && video.canPlayType('video/webm')) {
+      video.preload = 'auto'
+    }
+
     video.src = url
     setBuffering(true)
 
@@ -82,12 +89,27 @@ export default function CdnVideoTile({ label, chunks, videoRef }: CdnVideoTilePr
       })
     }
 
+    const handleTimeUpdate = () => {
+      if (nextChunk && video.currentTime > 0 && video.duration - video.currentTime < 0.3) {
+        const nextIndex = currentIndex + 1
+        if (nextIndex < sorted.length) {
+          setCurrentChunkIndex(nextIndex)
+        }
+      }
+    }
+
     const handleEnded = () => {
       const nextIndex = currentIndex + 1
       if (nextIndex < sorted.length) {
         setCurrentChunkIndex(nextIndex)
       } else {
-        setCurrentChunkIndex(0)
+        const now = Date.now()
+        const recentIndex = sorted.findIndex((c) => c.ts > now - 5000)
+        if (recentIndex >= 0) {
+          setCurrentChunkIndex(recentIndex)
+        } else {
+          setCurrentChunkIndex(0)
+        }
       }
     }
 
@@ -102,11 +124,13 @@ export default function CdnVideoTile({ label, chunks, videoRef }: CdnVideoTilePr
     }
 
     video.addEventListener('loadeddata', handleLoadedData, { once: true })
+    video.addEventListener('timeupdate', handleTimeUpdate)
     video.addEventListener('ended', handleEnded, { once: true })
     video.addEventListener('error', handleError, { once: true })
 
     return () => {
       video.removeEventListener('loadeddata', handleLoadedData)
+      video.removeEventListener('timeupdate', handleTimeUpdate)
       video.removeEventListener('ended', handleEnded)
       video.removeEventListener('error', handleError)
     }

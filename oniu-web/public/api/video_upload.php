@@ -8,6 +8,7 @@ ignore_user_abort(true);
 
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');
+enable_gzip();
 
 function respond(int $status, array $payload): void {
   http_response_code($status);
@@ -94,11 +95,16 @@ function read_chunks_since(string $file, int $since_ms, int $limit = 100): array
   try {
     if (!flock($fp, LOCK_SH)) return [];
     $size = filesize($file);
-    $readBytes = 262144;
-    if ($size !== false && $size > $readBytes) {
-      fseek($fp, -$readBytes, SEEK_END);
-      fgets($fp);
+    if ($size === false || $size === 0) return [];
+    
+    $readBytes = 524288;
+    $startPos = 0;
+    if ($size > $readBytes) {
+      $startPos = $size - $readBytes;
+      fseek($fp, $startPos, SEEK_SET);
+      $firstLine = fgets($fp);
     }
+    
     while (!feof($fp)) {
       $line = fgets($fp);
       if ($line === false) break;
@@ -201,6 +207,30 @@ if ($method === 'POST') {
   ];
   
   append_chunk(video_chunks_file($room), $chunk);
+  
+  $cleanupAge = 300;
+  $cleanupDir = uploads_dir() . '/video/' . $room;
+  if (is_dir($cleanupDir)) {
+    $now = time();
+    $dirs = glob($cleanupDir . '/*', GLOB_ONLYDIR);
+    foreach ($dirs as $dateDir) {
+      $dirTime = @filemtime($dateDir);
+      if ($dirTime !== false && ($now - $dirTime) > $cleanupAge) {
+        $files = glob($dateDir . '/*.webm');
+        foreach ($files as $file) {
+          $fileTime = @filemtime($file);
+          if ($fileTime !== false && ($now - $fileTime) > $cleanupAge) {
+            @unlink($file);
+          }
+        }
+        $remaining = glob($dateDir . '/*');
+        if (empty($remaining)) {
+          @rmdir($dateDir);
+        }
+      }
+    }
+  }
+  
   app_log_error("video_upload.php: SUCCESS - room=$room, cid=$cid, chunkId=$chunkId, size=" . strlen($binaryData));
   respond(200, ['ok' => true, 'chunk' => $chunk]);
 }
