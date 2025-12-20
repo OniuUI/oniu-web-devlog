@@ -9,21 +9,33 @@ export type VideoChunk = {
 export async function uploadVideoChunk(input: {
   room: string
   cid: string
-  chunk: string
+  chunk: string | Blob
 }): Promise<VideoChunk> {
   try {
-    const chunkSize = input.chunk.length
-    console.log(`[VideoBroadcast] Publishing chunk - room: "${input.room}", cid: ${input.cid}, size: ${chunkSize} chars`)
+    let blob: Blob
+    if (typeof input.chunk === 'string') {
+      const base64Data = input.chunk.replace(/^data:video\/[^;]+;base64,/, '')
+      const binaryString = atob(base64Data)
+      const bytes = new Uint8Array(binaryString.length)
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i)
+      }
+      blob = new Blob([bytes], { type: 'video/webm' })
+    } else {
+      blob = input.chunk
+    }
+    
+    console.log(`[VideoBroadcast] Publishing chunk - room: "${input.room}", cid: ${input.cid}, size: ${blob.size} bytes`)
+    
+    const formData = new FormData()
+    formData.append('room', input.room)
+    formData.append('cid', input.cid)
+    formData.append('chunk', blob, 'chunk.webm')
     
     const res = await fetch('/api/video_upload.php', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       cache: 'no-store',
-      body: JSON.stringify({
-        room: input.room,
-        cid: input.cid,
-        chunk: input.chunk,
-      }),
+      body: formData,
     })
     
     if (!res.ok) {

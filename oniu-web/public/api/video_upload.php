@@ -22,6 +22,15 @@ function read_json_body(): array {
   return is_array($data) ? $data : [];
 }
 
+function enable_gzip(): void {
+  if (extension_loaded('zlib') && !ob_get_level()) {
+    $acceptEncoding = $_SERVER['HTTP_ACCEPT_ENCODING'] ?? '';
+    if (strpos($acceptEncoding, 'gzip') !== false) {
+      ob_start('ob_gzhandler');
+    }
+  }
+}
+
 function safe_room($v): string {
   $room = is_string($v) ? trim($v) : '';
   if ($room === '' || !preg_match('/^[a-z0-9_-]{1,32}$/', $room)) return 'global';
@@ -117,25 +126,49 @@ function now_ms(): int {
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
 if ($method === 'POST') {
-  $body = read_json_body();
-  $room = safe_room($body['room'] ?? 'global');
-  $cid = safe_id($body['cid'] ?? null);
-  if (!$cid) {
-    app_log_error("video_upload.php: missing_cid, room=$room");
-    respond(400, ['error' => 'missing_cid']);
+  $binaryData = null;
+  
+  if (isset($_FILES['chunk']) && $_FILES['chunk']['error'] === UPLOAD_ERR_OK) {
+    $room = safe_room($_POST['room'] ?? 'global');
+    $cid = safe_id($_POST['cid'] ?? null);
+    
+    if (!$cid) {
+      app_log_error("video_upload.php: missing_cid, room=$room");
+      respond(400, ['error' => 'missing_cid']);
+    }
+    
+    $binaryData = @file_get_contents($_FILES['chunk']['tmp_name']);
+    if ($binaryData === false) {
+      app_log_error("video_upload.php: failed_to_read_upload, room=$room, cid=$cid");
+      respond(400, ['error' => 'failed_to_read_upload']);
+    }
+  } else {
+    $body = read_json_body();
+    $room = safe_room($body['room'] ?? 'global');
+    $cid = safe_id($body['cid'] ?? null);
+    
+    if (!$cid) {
+      app_log_error("video_upload.php: missing_cid, room=$room");
+      respond(400, ['error' => 'missing_cid']);
+    }
+    
+    $chunkData = $body['chunk'] ?? null;
+    if (!is_string($chunkData)) {
+      app_log_error("video_upload.php: missing_chunk, room=$room, cid=$cid");
+      respond(400, ['error' => 'missing_chunk']);
+    }
+    
+    $base64Data = preg_replace('/^data:video\/[^;]+;base64,/', '', $chunkData);
+    $binaryData = @base64_decode($base64Data, true);
+    if ($binaryData === false) {
+      app_log_error("video_upload.php: invalid_base64, room=$room, cid=$cid");
+      respond(400, ['error' => 'invalid_base64']);
+    }
   }
   
-  $chunkData = $body['chunk'] ?? null;
-  if (!is_string($chunkData)) {
-    app_log_error("video_upload.php: missing_chunk, room=$room, cid=$cid");
-    respond(400, ['error' => 'missing_chunk']);
-  }
-  
-  $base64Data = preg_replace('/^data:video\/[^;]+;base64,/', '', $chunkData);
-  $binaryData = @base64_decode($base64Data, true);
-  if ($binaryData === false) {
-    app_log_error("video_upload.php: invalid_base64, room=$room, cid=$cid");
-    respond(400, ['error' => 'invalid_base64']);
+  if ($binaryData === null) {
+    app_log_error("video_upload.php: no_binary_data, room=$room, cid=$cid");
+    respond(400, ['error' => 'no_binary_data']);
   }
   
   $chunkId = bin2hex(random_bytes(8));
